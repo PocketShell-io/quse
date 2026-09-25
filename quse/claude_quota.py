@@ -1,6 +1,7 @@
 """Proactive Claude quota checking via OAuth usage endpoint."""
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -15,6 +16,10 @@ from quse._shared import UsageWindow, normalize_reset_at
 logger = logging.getLogger(__name__)
 
 _USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+# The plain usage response always carries ``cedar_ember: null``; only the
+# flagged read returns the reset-grant block. This is the same read Claude
+# Code uses for its ``/limit-reset`` status.
+_USAGE_RESETS_QUERY = "?cedar_ember=1&skip_spend=1"
 _OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 _DEFAULT_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 _OAUTH_SCOPES = [
@@ -44,6 +49,56 @@ class ClaudeQuotaWindow:
 
 
 @dataclass(slots=True)
+class ClaudeReset:
+    """A one-time Claude usage-limit reset grant (``cedar_ember.grants``).
+
+    Anthropic surfaces these in Settings > Usage's "Resets" section and in
+    Claude Code's ``/limit-reset`` flow: redeeming one refills the cleared
+    windows immediately. quse only lists them; redemption is a state-changing
+    ``POST /api/organizations/{org}/reset_rate_limits`` that quse never calls.
+    """
+
+    grant_id: str | None = None
+    label: str | None = None
+    resets_left: int | None = None
+    usable_now: bool = False
+    paused: bool = False
+    expires_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.grant_id, str):
+            self.grant_id = self.grant_id.strip() or None
+        else:
+            self.grant_id = None
+        if isinstance(self.label, str):
+            self.label = self.label.strip() or None
+        else:
+            self.label = None
+        if isinstance(self.resets_left, bool):
+            self.resets_left = None
+        elif not isinstance(self.resets_left, int):
+            self.resets_left = None
+        self.usable_now = bool(self.usable_now)
+        self.paused = bool(self.paused)
+        self.expires_at = normalize_reset_at(self.expires_at)
+
+    @property
+    def is_available(self) -> bool:
+        """Redeemable now, matching Claude Code's own offer check: the server
+        must flag the grant usable, it must not be paused, resets must remain,
+        and it must not have expired."""
+        if not self.usable_now:
+            return False
+        if self.paused:
+            return False
+        if self.resets_left is not None and self.resets_left <= 0:
+            return False
+        if self.expires_at is None:
+            return True
+        return self.expires_at > datetime.now(timezone.utc)
+
+
+@dataclass(slots=True)
 class ClaudeQuotaStatus:
     five_hour: ClaudeQuotaWindow = field(default_factory=ClaudeQuotaWindow)
     seven_day: ClaudeQuotaWindow = field(default_factory=ClaudeQuotaWindow)
@@ -51,6 +106,7 @@ class ClaudeQuotaStatus:
     checked_at: float = 0.0
     error: str | None = None
     subscription: str | None = None
+    resets: list[ClaudeReset] = field(default_factory=list)
 
     @property
     def short_term(self) -> UsageWindow:
@@ -67,6 +123,10 @@ class ClaudeQuotaStatus:
             reset_at=self.seven_day.reset_at,
             window="7d",
         )
+
+    @property
+    def available_resets(self) -> list[ClaudeReset]:
+        return [reset for reset in self.resets if reset.is_available]
 
 
 @dataclass(slots=True)
@@ -214,6 +274,37 @@ def _read_access_token(creds_path: Path | None = None) -> str | None:
     return credentials.access_token
 
 
+def _parse_reset_grants(data: dict) -> list[ClaudeReset]:
+    """Parse the usage response's ``cedar_ember`` block into reset grants.
+
+    The block is absent or ``null`` unless the request carries
+    ``cedar_ember=1``. Malformed entries are skipped, matching Claude Code's
+    own "ignore a malformed grant" behavior.
+    """
+    cedar = data.get("cedar_ember")
+    if not isinstance(cedar, dict):
+        return []
+    grants = cedar.get("grants")
+    if not isinstance(grants, list):
+        return []
+    parsed: list[ClaudeReset] = []
+    for grant in grants:
+        if not isinstance(grant, dict):
+            continue
+        reset = ClaudeReset(
+            grant_id=grant.get("id"),
+            label=grant.get("label"),
+            resets_left=grant.get("resets_left"),
+            usable_now=grant.get("usable_now"),
+            paused=grant.get("paused"),
+            expires_at=grant.get("ends_at"),
+        )
+        if reset.grant_id is None:
+            continue
+        parsed.append(reset)
+    return parsed
+
+
 def _parse_usage_response(data: dict) -> ClaudeQuotaStatus:
     five_hour_data = data.get("five_hour")
     if not isinstance(five_hour_data, dict):
@@ -242,12 +333,13 @@ def _parse_usage_response(data: dict) -> ClaudeQuotaStatus:
         limit_reached=seven_day.percent_remaining <= 5.0,
         checked_at=time.monotonic(),
         subscription=normalized_subscription,
+        resets=_parse_reset_grants(data),
     )
 
 
 def _fetch_usage(token: str, *, timeout: float = 10.0) -> ClaudeQuotaStatus:
     req = urllib.request.Request(
-        _USAGE_URL,
+        _USAGE_URL + _USAGE_RESETS_QUERY,
         headers={
             "Authorization": f"Bearer {token}",
             "anthropic-beta": "oauth-2025-04-20",

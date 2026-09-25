@@ -378,6 +378,115 @@ def test_claude_human_round_trips_real_payload(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Claude reset grants (banked resets)
+# ---------------------------------------------------------------------------
+
+# Status block captured 2026-09-24 from
+# api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1 (this account
+# was ineligible and returned no grants, so the grant entry follows the shape
+# Claude Code's /limit-reset parser enforces).
+
+CLAUDE_RESETS_PAYLOAD = {
+    "five_hour": {
+        "utilization": 0.0,
+        "resets_at": None,
+    },
+    "seven_day": {
+        "utilization": 2.0,
+        "resets_at": "2026-10-01T14:59:59.870695+00:00",
+    },
+    "cedar_ember": {
+        "at_limit": False,
+        "cooldown_until": None,
+        "eligible": True,
+        "event_props": None,
+        "exhausted": [],
+        "grants": [
+            {
+                "id": "reset-1",
+                "label": "Full limit reset",
+                "resets_total": 1,
+                "resets_left": 1,
+                "starts_at": "2026-09-01T00:00:00+00:00",
+                "ends_at": "2026-10-15T23:59:59+00:00",
+                "clears": ["five_hour", "seven_day"],
+                "paused": False,
+                "usable_now": True,
+                "use_requires_limit": False,
+                "percent_used": {},
+                "blocking": [],
+            }
+        ],
+        "ineligible_reason": None,
+        "next_grant_id": "reset-1",
+        "weekly_resets_at": "2026-10-01T15:00:00+00:00",
+    },
+}
+
+
+def test_claude_parse_reset_grants_payload():
+    from quse.claude_quota import _parse_usage_response
+
+    status = _parse_usage_response(CLAUDE_RESETS_PAYLOAD)
+
+    assert len(status.resets) == 1
+    reset = status.resets[0]
+    assert reset.grant_id == "reset-1"
+    assert reset.label == "Full limit reset"
+    assert reset.resets_left == 1
+    _assert_reset_at_is_datetime(reset.expires_at)
+    assert reset_at_to_iso(reset.expires_at) == "2026-10-15T23:59:59Z"
+    assert reset.is_available is True
+    assert len(status.available_resets) == 1
+
+
+def test_claude_parse_ignores_missing_or_malformed_reset_grants():
+    from quse.claude_quota import _parse_usage_response
+
+    # The plain (unflagged) usage response carries cedar_ember: null.
+    assert _parse_usage_response(CLAUDE_USAGE_PAYLOAD).resets == []
+    assert _parse_usage_response({"cedar_ember": None}).resets == []
+
+    malformed = _parse_usage_response(
+        {
+            "cedar_ember": {
+                "eligible": True,
+                "grants": [
+                    "not-a-grant",
+                    {"label": "no id"},
+                    {"id": "  ", "label": "blank id"},
+                    {"id": "ok", "usable_now": True},
+                ],
+            }
+        }
+    )
+
+    assert [reset.grant_id for reset in malformed.resets] == ["ok"]
+
+
+def test_claude_reset_unavailable_states():
+    from quse.claude_quota import ClaudeReset
+
+    not_usable = ClaudeReset(grant_id="a", usable_now=False, expires_at="2027-01-01")
+    paused = ClaudeReset(
+        grant_id="a", usable_now=True, paused=True, expires_at="2027-01-01"
+    )
+    exhausted = ClaudeReset(
+        grant_id="a", usable_now=True, resets_left=0, expires_at="2027-01-01"
+    )
+    expired = ClaudeReset(
+        grant_id="a", usable_now=True, resets_left=1, expires_at="2020-01-01"
+    )
+
+    for reset in (not_usable, paused, exhausted, expired):
+        assert reset.is_available is False
+
+    # No expiry listed: stays redeemable, like the other providers' resets.
+    undated = ClaudeReset(grant_id="a", usable_now=True, resets_left=1)
+    assert undated.is_available is True
+
+
+# ---------------------------------------------------------------------------
 # Copilot
 # ---------------------------------------------------------------------------
 

@@ -4,6 +4,7 @@ from quse._shared import BankedReset, UsageStatus, UsageWindow, normalize_reset_
 from quse.claude_quota import (
     ClaudeQuotaStatus,
     ClaudeQuotaWindow,
+    ClaudeReset,
     check_claude_quota,
 )
 from quse.codex_quota import (
@@ -52,6 +53,7 @@ __all__ = [
     "BankedReset",
     "ClaudeQuotaStatus",
     "ClaudeQuotaWindow",
+    "ClaudeReset",
     "ClaudeUsageProvider",
     "CodexQuotaStatus",
     "CodexResetCredit",
