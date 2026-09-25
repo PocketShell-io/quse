@@ -62,6 +62,10 @@ Provider mapping:
   Codex JSON output also includes `details.banked_resets` from ChatGPT's
   rate-limit reset-credit endpoint when available.
 - `claude`: the API's short and long signals map to `5h` and `7d`.
+  `details.banked_resets` lists one-time limit-reset grants (the "Resets"
+  shown under Settings > Usage) from the usage endpoint's `cedar_ember` read,
+  with the same unified shape as other providers; quse only lists them and
+  never redeems them.
 - `copilot`: the monthly premium-interactions signal maps to `monthly`.
 - `zai`: the five-hour quota maps to rolling `5h` and the token quota maps to
   `7d`; its `monthly` window is unavailable. `details.banked_resets` lists
@@ -76,9 +80,9 @@ Provider mapping:
   Grok's proto3 billing payload omits a 0% used figure, so a weekly period
   with no reported percent is treated as 100% remaining. Grok JSON output
   includes `details.product_usage`. When
-  Codex or Grok expose one-time usage resets, `details.banked_resets` lists
-  them with one unified shape (`expires_at`, `available`, `label`) for both
-  providers and both human and JSON output render them as `banked_resets`.
+  Codex, Claude, or Grok expose one-time usage resets, `details.banked_resets`
+  lists them with one unified shape (`expires_at`, `available`, `label`) for
+  all providers and both human and JSON output render them as `banked_resets`.
   The one-time reset RPC is separate from Grok's CLI billing responses. `quse`
   queries it with the stored OAuth token and uses the local `curl` command for
   the `grok.com` request because Cloudflare can challenge Python's TLS client.
