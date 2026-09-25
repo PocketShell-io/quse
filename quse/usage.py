@@ -171,6 +171,22 @@ def _banked_resets_from_zai(status_obj: Any) -> list[dict[str, Any]]:
     return banked
 
 
+def _banked_resets_from_claude(status_obj: Any) -> list[dict[str, Any]]:
+    banked: list[dict[str, Any]] = []
+    for reset in getattr(status_obj, "resets", []):
+        label = getattr(reset, "label", None)
+        if label is None:
+            label = getattr(reset, "grant_id", None)
+        banked.append(
+            _banked_reset_record(
+                expires_at=getattr(reset, "expires_at", None),
+                available=bool(getattr(reset, "is_available", False)),
+                label=label,
+            )
+        )
+    return banked
+
+
 def _format_banked_resets_lines(
     record: dict[str, Any], *, header: bool = True, now: datetime | None = None
 ) -> list[str]:
@@ -341,6 +357,8 @@ class ClaudeUsageProvider(UsageProvider):
         return {
             "limit_reached": status_obj.limit_reached,
             "subscription": status_obj.subscription,
+            "banked_resets": _banked_resets_from_claude(status_obj),
+            "banked_resets_available": len(status_obj.available_resets),
             "windows": {
                 "five_hour": asdict(status_obj.five_hour),
                 "seven_day": asdict(status_obj.seven_day),

@@ -486,6 +486,49 @@ def test_claude_reset_unavailable_states():
     assert undated.is_available is True
 
 
+def test_claude_json_round_trips_reset_grants(monkeypatch):
+    from quse.claude_quota import _parse_usage_response
+
+    status = _parse_usage_response(CLAUDE_RESETS_PAYLOAD)
+    monkeypatch.setattr("quse.usage.check_claude_quota", lambda: status)
+
+    output = CliRunner().invoke(app, ["claude", "--json"]).output
+    record = json.loads(output)["claude"]
+
+    assert record["windows"]["5h"]["reset_at"] is None
+    assert record["windows"]["7d"]["reset_at"] == "2026-10-01T14:59:59Z"
+    assert record["details"]["banked_resets_available"] == 1
+    assert record["details"]["banked_resets"] == [
+        {
+            "available": True,
+            "expires_at": "2026-10-15T23:59:59Z",
+            "label": "Full limit reset",
+        }
+    ]
+
+
+def test_claude_human_round_trips_reset_grants(monkeypatch):
+    _set_utc_tz(monkeypatch)
+    from quse.claude_quota import _parse_usage_response
+
+    status = _parse_usage_response(CLAUDE_RESETS_PAYLOAD)
+    monkeypatch.setattr("quse.usage.check_claude_quota", lambda: status)
+    _freeze_clock(monkeypatch, datetime(2026, 9, 24, 12, 0, 0, tzinfo=timezone.utc))
+
+    output = CliRunner().invoke(app, ["claude"]).output
+
+    assert output.strip() == (
+        "5h:\n"
+        "    remaining: 100.0%\n"
+        "    reset: unknown\n"
+        "7d:\n"
+        "    remaining: 98.0%\n"
+        "    reset: 01-10-2026 14:59 (UTC) / in 7d 2h\n"
+        "banked_resets:\n"
+        "    expires: 15-10-2026 23:59 (UTC) / in 21d 11h"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Copilot
 # ---------------------------------------------------------------------------
