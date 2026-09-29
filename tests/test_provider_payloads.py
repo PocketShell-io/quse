@@ -814,10 +814,21 @@ ZAI_RESET_CARDS_PAYLOAD = {
         "targetType": "PERSONAL",
         "lastFiveHourResetTime": None,
         "lastWeekResetTime": None,
-        "fiveHourResets": [],
-        "weekResets": [
+        "fiveHourResets": [
+            {
+                "recordId": 294119,
+                "expireTime": "2026-09-24 12:00:00",
+                "available": True,
+            },
             {
                 "recordId": 294120,
+                "expireTime": "2026-09-30 12:00:00",
+                "available": True,
+            },
+        ],
+        "weekResets": [
+            {
+                "recordId": 294121,
                 "expireTime": "2026-10-01 23:59:59",
                 "available": True,
             }
@@ -832,14 +843,16 @@ def test_zai_parse_reset_cards_payload():
 
     resets = _parse_reset_cards_response(ZAI_RESET_CARDS_PAYLOAD)
 
-    assert len(resets) == 1
-    assert resets[0].record_id == 294120
-    assert resets[0].scope == "week"
-    _assert_reset_at_is_datetime(resets[0].expires_at)
+    assert len(resets) == 3
+    weekly = [reset for reset in resets if reset.scope == "week"]
+    assert len(weekly) == 1
+    assert weekly[0].record_id == 294121
+    _assert_reset_at_is_datetime(weekly[0].expires_at)
     # Dashboard wall time is Singapore (UTC+8), not UTC.
-    assert reset_at_to_iso(resets[0].expires_at) == "2026-10-01T15:59:59Z"
-    assert resets[0].is_available is True
-    assert len([reset for reset in resets if reset.is_available]) == 1
+    assert reset_at_to_iso(weekly[0].expires_at) == "2026-10-01T15:59:59Z"
+    assert weekly[0].is_available is True
+    five_hour = [reset for reset in resets if reset.scope == "five_hour"]
+    assert [reset.record_id for reset in five_hour] == [294119, 294120]
 
 
 def test_zai_parse_reset_cards_marks_expired_unavailable():
@@ -863,6 +876,7 @@ def test_zai_json_round_trips_reset_cards(monkeypatch):
     output = CliRunner().invoke(app, ["zai", "--json"]).output
     record = json.loads(output)["zai"]
 
+    # Five-hour cards are dropped; only the weekly card is listed and counted.
     assert record["details"]["banked_resets_available"] == 1
     assert record["details"]["banked_resets"] == [
         {

@@ -69,8 +69,10 @@ Provider mapping:
 - `copilot`: the monthly premium-interactions signal maps to `monthly`.
 - `zai`: the five-hour quota maps to rolling `5h` and the token quota maps to
   `7d`; its `monthly` window is unavailable. `details.banked_resets` lists
-  quota reset cards from `customer-package-reset/list` (personal plan,
-  read-only) with the same unified shape as other providers.
+  weekly quota reset cards from `customer-package-reset/list` (personal plan,
+  read-only) with the same unified shape as other providers; five-hour reset
+  cards are skipped because the `5h` window itself already reports its reset
+  time.
 - `go`: OpenCode Go's rolling and weekly API windows map to `5h` and `7d`, and
   its monthly API window maps to `monthly`.
 - `grok`: the weekly SuperGrok / X Premium window and the monthly credit

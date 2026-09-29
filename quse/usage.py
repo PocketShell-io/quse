@@ -149,7 +149,6 @@ def _banked_resets_from_grok(status_obj: Any) -> list[dict[str, Any]]:
 
 
 _ZAI_BANKED_SCOPE_LABELS = {
-    "five_hour": "5-hour reset",
     "week": "weekly reset",
 }
 
@@ -158,6 +157,10 @@ def _banked_resets_from_zai(status_obj: Any) -> list[dict[str, Any]]:
     banked: list[dict[str, Any]] = []
     for reset in getattr(status_obj, "resets", []):
         scope = getattr(reset, "scope", None)
+        if scope == "five_hour":
+            # The 5h window already reports its own reset time, so banked
+            # five-hour cards only duplicate it.
+            continue
         label = _ZAI_BANKED_SCOPE_LABELS.get(scope)
         if label is None:
             label = scope
@@ -404,11 +407,14 @@ class ZaiUsageProvider(UsageProvider):
         }
 
     def details(self, status_obj: Any) -> dict[str, Any]:
+        banked = _banked_resets_from_zai(status_obj)
         return {
             "limit_reached": status_obj.limit_reached,
             "max_used_percent": status_obj.max_used_percent,
-            "banked_resets": _banked_resets_from_zai(status_obj),
-            "banked_resets_available": len(status_obj.available_resets),
+            "banked_resets": banked,
+            "banked_resets_available": sum(
+                1 for reset in banked if reset["available"]
+            ),
             "banked_resets_error": status_obj.resets_error,
             "windows": {
                 "five_hour": asdict(status_obj.five_hour),
