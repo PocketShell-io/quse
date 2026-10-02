@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quse"
-version = "0.0.16"
+version = "0.0.17"
 description = "Quota and usage checks for coding-agent CLIs."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "Alexey Grigorev"}]
 license = {text = "MIT"}
-keywords = ["codex", "claude", "copilot", "grok", "quota", "usage"]
+keywords = ["codex", "claude", "copilot", "grok", "gemini", "quota", "usage"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

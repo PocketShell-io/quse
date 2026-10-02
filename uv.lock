@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.11"
 
 [options]
-exclude-newer = "2026-08-28T17:20:15.627778783Z"
+exclude-newer = "2026-09-25T08:55:08.049644006Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -579,7 +579,7 @@ wheels = [
 
 [[package]]
 name = "quse"
-version = "0.0.16"
+version = "0.0.17"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
