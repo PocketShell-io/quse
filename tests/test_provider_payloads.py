@@ -232,6 +232,7 @@ def _freeze_clock(monkeypatch, fixed_now: datetime) -> None:
             return fixed_now.astimezone(tz)
 
     monkeypatch.setattr("quse.usage.datetime", _FrozenDateTime)
+    monkeypatch.setattr("quse.zai_quota.datetime", _FrozenDateTime)
 
 
 # ---------------------------------------------------------------------------
@@ -838,7 +839,8 @@ ZAI_RESET_CARDS_PAYLOAD = {
 }
 
 
-def test_zai_parse_reset_cards_payload():
+def test_zai_parse_reset_cards_payload(monkeypatch):
+    _freeze_clock(monkeypatch, datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc))
     from quse.zai_quota import _parse_reset_cards_response
 
     resets = _parse_reset_cards_response(ZAI_RESET_CARDS_PAYLOAD)
@@ -867,6 +869,7 @@ def test_zai_parse_reset_cards_marks_expired_unavailable():
 
 
 def test_zai_json_round_trips_reset_cards(monkeypatch):
+    _freeze_clock(monkeypatch, datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc))
     from quse.zai_quota import _parse_reset_cards_response, _parse_usage_response
 
     status = _parse_usage_response(ZAI_PAYLOAD)
