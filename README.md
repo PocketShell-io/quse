@@ -3,11 +3,12 @@
 Quota and usage checks for coding-agent CLIs.
 
 `quse` reports normalized usage for providers used by tools such as Codex,
-Claude Code, GitHub Copilot, Grok Build, Z.AI, and OpenCode Go.
+Claude Code, GitHub Copilot, Grok Build, Z.AI, OpenCode Go, and Gemini / Antigravity.
 
 ```bash
 quse
 quse codex
+quse gemini
 quse copilot --json
 ```
 
@@ -43,13 +44,11 @@ Supported providers:
 
 - `codex`
 - `claude`
+- `gemini` (aliases: `antigravity`, `agy`)
 - `zai`
 - `copilot`
 - `grok` (alias: `grok-build`)
 - `go`
-
-`gemini` is accepted and reports `unsupported` because it does not currently
-expose a usage endpoint.
 
 Provider mapping:
 
@@ -66,6 +65,11 @@ Provider mapping:
   shown under Settings > Usage) from the usage endpoint's `cedar_ember` read,
   with the same unified shape as other providers; quse only lists them and
   never redeems them.
+- `gemini`: queries the Antigravity CLI (`agy`) non-interactive harness.
+  Its 5-hour and weekly quota buckets map to `5h` and `7d`. JSON output includes
+  `details.groups` containing the breakdown of quota buckets and remaining fractions.
+  `agy` is located from `AGY_BIN`, `ANTIGRAVITY_BIN`, `GEMINI_BIN`, PATH, or
+  `~/.local/bin/agy` and `~/.gemini/antigravity-cli/bin/agy`.
 - `copilot`: the monthly premium-interactions signal maps to `monthly`.
 - `zai`: the five-hour quota maps to rolling `5h` and the token quota maps to
   `7d`; its `monthly` window is unavailable. `details.banked_resets` lists
