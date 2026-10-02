@@ -14,6 +14,12 @@ from quse.codex_quota import (
     check_codex_quota,
 )
 from quse.copilot_quota import CopilotQuotaStatus, check_copilot_quota
+from quse.gemini_quota import (
+    GeminiQuotaBucket,
+    GeminiQuotaGroup,
+    GeminiQuotaStatus,
+    check_gemini_quota,
+)
 from quse.grok_quota import (
     GrokQuotaStatus,
     GrokQuotaWindow,
@@ -61,6 +67,9 @@ __all__ = [
     "CodexUsageProvider",
     "CopilotQuotaStatus",
     "CopilotUsageProvider",
+    "GeminiQuotaBucket",
+    "GeminiQuotaGroup",
+    "GeminiQuotaStatus",
     "GeminiUsageProvider",
     "GrokQuotaStatus",
     "GrokQuotaWindow",
@@ -84,6 +93,7 @@ __all__ = [
     "check_claude_quota",
     "check_codex_quota",
     "check_copilot_quota",
+    "check_gemini_quota",
     "check_grok_quota",
     "check_opencode_go_quota",
     "check_zai_quota",

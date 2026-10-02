@@ -204,6 +204,38 @@ ZAI_PAYLOAD = {
     },
 }
 
+# --- captured 2026-10-02 from agy -p "/quota" --output-format json ---
+
+GEMINI_PAYLOAD = {
+    "command": {
+        "description": "Show quota for all models.",
+        "groups": [
+            {
+                "name": "Gemini Models",
+                "buckets": [
+                    {
+                        "description": "5 hour quota for Gemini 2.5 Flash, 2.5 Pro, and Claude 3.7 Sonnet.",
+                        "id": "gemini-5h",
+                        "name": "5 Hour Quota",
+                        "remaining_fraction": 0.99,
+                        "reset_time": "2026-10-02T13:42:00Z",
+                        "window": "5h",
+                    },
+                    {
+                        "description": "Weekly quota for Gemini 2.5 Flash, 2.5 Pro, and Claude 3.7 Sonnet.",
+                        "id": "gemini-weekly",
+                        "name": "Weekly Quota",
+                        "remaining_fraction": 0.99,
+                        "reset_time": "2026-10-09T08:24:00Z",
+                        "window": "weekly",
+                    },
+                ],
+            }
+        ],
+    }
+}
+
+
 
 def _assert_reset_at_is_datetime(reset_at: object) -> None:
     """reset_at must be a tz-aware UTC datetime or None -- never a raw string."""
@@ -935,6 +967,81 @@ def test_zai_reset_cards_failure_is_non_blocking(monkeypatch):
     assert status.error is None
     assert status.resets == []
     assert status.resets_error == "reset cards unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Gemini / Antigravity
+# ---------------------------------------------------------------------------
+
+
+def test_gemini_parse_real_payload():
+    from quse.gemini_quota import _parse_quota_response
+
+    status = _parse_quota_response(GEMINI_PAYLOAD)
+
+    assert status.short_term is not None
+    assert status.long_term is not None
+    _assert_reset_at_is_datetime(status.short_term.reset_at)
+    _assert_reset_at_is_datetime(status.long_term.reset_at)
+
+    assert reset_at_to_iso(status.short_term.reset_at) == "2026-10-02T13:42:00Z"
+    assert reset_at_to_iso(status.long_term.reset_at) == "2026-10-09T08:24:00Z"
+    assert status.short_term.percent_remaining == 99.0
+    assert status.long_term.percent_remaining == 99.0
+    assert status.limit_reached is False
+
+
+def test_gemini_json_round_trips_real_payload(monkeypatch):
+    from quse.gemini_quota import _parse_quota_response
+
+    status = _parse_quota_response(GEMINI_PAYLOAD)
+    monkeypatch.setattr("quse.usage.check_gemini_quota", lambda: status)
+
+    output = CliRunner().invoke(app, ["gemini", "--json"]).output
+    record = json.loads(output)["gemini"]
+
+    assert record["windows"]["5h"]["reset_at"] == "2026-10-02T13:42:00Z"
+    assert record["windows"]["5h"]["percent_remaining"] == 99.0
+    assert record["windows"]["7d"]["reset_at"] == "2026-10-09T08:24:00Z"
+    assert record["windows"]["7d"]["percent_remaining"] == 99.0
+    assert record["details"]["limit_reached"] is False
+    assert len(record["details"]["groups"]) == 1
+
+
+def test_gemini_human_round_trips_real_payload(monkeypatch):
+    _set_utc_tz(monkeypatch)
+    from quse.gemini_quota import _parse_quota_response
+
+    status = _parse_quota_response(GEMINI_PAYLOAD)
+    monkeypatch.setattr("quse.usage.check_gemini_quota", lambda: status)
+    _freeze_clock(monkeypatch, datetime(2026, 10, 2, 10, 0, 0, tzinfo=timezone.utc))
+
+    output = CliRunner().invoke(app, ["gemini"]).output
+
+    assert output.strip() == (
+        "5h:\n"
+        "    remaining: 99.0%\n"
+        "    reset: 02-10-2026 13:42 (UTC) / in 3h\n"
+        "7d:\n"
+        "    remaining: 99.0%\n"
+        "    reset: 09-10-2026 08:24 (UTC) / in 6d 22h"
+    )
+
+
+def test_gemini_normalized_record_has_datetime_reset_at():
+    from quse.gemini_quota import _parse_quota_response
+    import quse.usage
+
+    status = _parse_quota_response(GEMINI_PAYLOAD)
+    original = quse.usage.check_gemini_quota
+    quse.usage.check_gemini_quota = lambda: status
+    try:
+        record = normalize_usage_provider("gemini")
+    finally:
+        quse.usage.check_gemini_quota = original
+
+    _assert_reset_at_is_datetime(record["windows"]["5h"]["reset_at"])
+    _assert_reset_at_is_datetime(record["windows"]["7d"]["reset_at"])
 
 
 def test_format_relative_days_and_hours():

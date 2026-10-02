@@ -12,6 +12,7 @@ from quse._shared import BankedReset, UsageWindow
 from quse.claude_quota import check_claude_quota
 from quse.codex_quota import check_codex_quota
 from quse.copilot_quota import check_copilot_quota
+from quse.gemini_quota import check_gemini_quota
 from quse.grok_quota import check_grok_quota
 from quse.opencode_go_quota import check_opencode_go_quota
 from quse.zai_quota import check_zai_quota
@@ -477,10 +478,45 @@ class GoUsageProvider(UsageProvider):
 
 class GeminiUsageProvider(UsageProvider):
     name = "gemini"
-    supported = False
+    supported = True
 
     def check_status(self) -> Any:
-        raise NotImplementedError
+        return check_gemini_quota()
+
+    def windows(self, status_obj: Any) -> dict[str, Any]:
+        return {
+            "5h": status_obj.short_term,
+            "7d": status_obj.long_term,
+            "monthly": None,
+        }
+
+    def details(self, status_obj: Any) -> dict[str, Any]:
+        groups_data = []
+        for group in getattr(status_obj, "groups", []):
+            buckets_data = []
+            for bucket in group.buckets:
+                buckets_data.append(
+                    {
+                        "id": bucket.id,
+                        "name": bucket.name,
+                        "description": bucket.description,
+                        "window": bucket.window,
+                        "percent_remaining": bucket.percent_remaining,
+                        "reset_at": bucket.reset_at,
+                    }
+                )
+            groups_data.append(
+                {
+                    "name": group.name,
+                    "description": group.description,
+                    "buckets": buckets_data,
+                }
+            )
+        return {
+            "limit_reached": getattr(status_obj, "limit_reached", False),
+            "description": getattr(status_obj, "description", None),
+            "groups": groups_data,
+        }
 
 
 UsageProviderClass: TypeAlias = type[UsageProvider]
@@ -497,6 +533,9 @@ USAGE_PROVIDER_CLASSES: tuple[UsageProviderClass, ...] = (
 )
 USAGE_PROVIDER_ALIASES = {
     "grok-build": "grok",
+    "antigravity": "gemini",
+    "agy": "gemini",
+    "antigrativy": "gemini",
 }
 USAGE_PROVIDER_CHOICES = tuple(
     [provider.name for provider in USAGE_PROVIDER_CLASSES]

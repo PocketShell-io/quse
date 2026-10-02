@@ -378,6 +378,7 @@ def test_collect_usage_without_provider_runs_checks_in_parallel(monkeypatch):
         "claude",
         "codex",
         "copilot",
+        "gemini",
         "go",
         "grok",
         "zai",
@@ -389,6 +390,7 @@ def test_collect_usage_without_provider_runs_checks_in_parallel(monkeypatch):
         {"provider": "copilot"},
         {"provider": "grok"},
         {"provider": "go"},
+        {"provider": "gemini"},
     ]
     assert elapsed < 0.25
 
