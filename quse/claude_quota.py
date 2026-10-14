@@ -1,7 +1,9 @@
 """Proactive Claude quota checking via OAuth usage endpoint."""
 
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+import fcntl
 import json
 import logging
 import os
@@ -31,6 +33,15 @@ _OAUTH_SCOPES = [
 ]
 _OAUTH_USER_AGENT = "Claude-Code/2.1.198"
 _CACHE_TTL_SECONDS = 60
+# The OAuth usage endpoint is aggressively rate limited per account, and
+# several schedulers (launcher gate, metrics collector, supervision) each spawn
+# their own ``quse`` process. A shared on-disk cache keeps them to one live
+# read per TTL, and a 429 opens an exponential backoff window during which no
+# process calls the endpoint at all.
+_DISK_CACHE_TTL_SECONDS = 180
+_BACKOFF_429_BASE_SECONDS = 120
+_BACKOFF_ERROR_BASE_SECONDS = 30
+_BACKOFF_MAX_SECONDS = 1800
 _TOKEN_REFRESH_BUFFER_MS = 300_000
 
 
@@ -107,6 +118,14 @@ class ClaudeQuotaStatus:
     error: str | None = None
     subscription: str | None = None
     resets: list[ClaudeReset] = field(default_factory=list)
+    # When the windows were read from the API. ``stale`` marks a cached
+    # reading served because a live read failed; ``error`` then says why.
+    observed_at: datetime | None = None
+    stale: bool = False
+    next_retry_at: datetime | None = None
+    http_status: int | None = None
+    retry_after: float | None = None
+    raw: dict | None = field(default=None, repr=False)
 
     @property
     def short_term(self) -> UsageWindow:
@@ -334,6 +353,8 @@ def _parse_usage_response(data: dict) -> ClaudeQuotaStatus:
         checked_at=time.monotonic(),
         subscription=normalized_subscription,
         resets=_parse_reset_grants(data),
+        observed_at=datetime.now(timezone.utc),
+        raw=data,
     )
 
 
@@ -350,6 +371,14 @@ def _fetch_usage(token: str, *, timeout: float = 10.0) -> ClaudeQuotaStatus:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return _parse_usage_response(data)
+    except urllib.error.HTTPError as exc:
+        logger.warning("claude quota check failed (fail-open): %s", exc)
+        return ClaudeQuotaStatus(
+            checked_at=time.monotonic(),
+            error=str(exc),
+            http_status=exc.code,
+            retry_after=_parse_retry_after(exc.headers),
+        )
     except (
         urllib.error.URLError,
         urllib.error.HTTPError,
@@ -360,15 +389,132 @@ def _fetch_usage(token: str, *, timeout: float = 10.0) -> ClaudeQuotaStatus:
         return ClaudeQuotaStatus(checked_at=time.monotonic(), error=str(exc))
 
 
+def _parse_retry_after(headers: object) -> float | None:
+    if headers is None:
+        return None
+    try:
+        value = headers.get("Retry-After")
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _disk_cache_path() -> Path:
+    configured = os.environ.get("QUSE_CACHE_DIR")
+    if configured:
+        return Path(configured) / "claude-usage.json"
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return Path(xdg) / "quse" / "claude-usage.json"
+    return Path.home() / ".cache" / "quse" / "claude-usage.json"
+
+
+@contextmanager
+def _disk_cache_lock(path: Path):
+    """Serialize concurrent quse processes so only one hits the endpoint."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path.with_suffix(".lock"), "a")
+    except OSError:
+        yield
+        return
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        handle.close()
+
+
+def _load_disk_cache(path: Path) -> dict:
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(state, dict):
+        return {}
+    return state
+
+
+def _save_disk_cache(path: Path, state: dict) -> None:
+    """Persist usage numbers and backoff state only, never credentials."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(state), encoding="utf-8")
+        tmp_path.chmod(0o600)
+        tmp_path.replace(path)
+    except OSError as exc:
+        logger.warning("claude quota cache write failed: %s", exc)
+
+
+def _status_from_cache(state: dict) -> ClaudeQuotaStatus | None:
+    raw = state.get("raw")
+    observed_unix = state.get("observed_unix")
+    if not isinstance(raw, dict) or not isinstance(observed_unix, (int, float)):
+        return None
+    status = _parse_usage_response(raw)
+    status.observed_at = datetime.fromtimestamp(observed_unix, tz=timezone.utc)
+    return status
+
+
+def _iso(value: datetime | None) -> str:
+    if value is None:
+        return "never"
+    return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _failure_status(
+    state: dict, cached: ClaudeQuotaStatus | None, now: float
+) -> ClaudeQuotaStatus:
+    """Explicit error state; a prior reading is attached but flagged stale."""
+    reason = state.get("last_error") or "claude usage read failed"
+    next_retry = None
+    backoff_until = state.get("backoff_until")
+    if isinstance(backoff_until, (int, float)):
+        next_retry = datetime.fromtimestamp(backoff_until, tz=timezone.utc)
+    http_status = state.get("last_http_status")
+    if not isinstance(http_status, int):
+        http_status = None
+    if cached is None:
+        return ClaudeQuotaStatus(
+            checked_at=time.monotonic(),
+            error=f"{reason}; no cached reading; next retry after {_iso(next_retry)}",
+            next_retry_at=next_retry,
+            http_status=http_status,
+        )
+    age_min = int((now - cached.observed_at.timestamp()) // 60)
+    return replace(
+        cached,
+        checked_at=time.monotonic(),
+        stale=True,
+        next_retry_at=next_retry,
+        http_status=http_status,
+        error=(
+            f"stale: {reason}; showing reading observed {_iso(cached.observed_at)} "
+            f"({age_min}m ago); next retry after {_iso(next_retry)}"
+        ),
+    )
+
+
 def check_claude_quota(
     *,
     creds_path: Path | None = None,
     cache_ttl: float = _CACHE_TTL_SECONDS,
+    disk_cache_ttl: float | None = None,
     _fetch: object = None,
 ) -> ClaudeQuotaStatus:
-    """Check Claude quota proactively. Returns cached result within TTL.
+    """Check Claude quota proactively.
 
-    Fails open: if auth is missing or API call fails, returns a non-blocking status.
+    Live reads are shared across processes through an on-disk cache
+    (``$QUSE_CACHE_DIR`` or ``~/.cache/quse/claude-usage.json``). Failed reads
+    back off exponentially (honoring ``Retry-After`` on 429) and return an
+    error status; the last good reading is attached with ``stale=True`` and
+    its ``observed_at`` so callers never mistake it for a fresh one.
     """
     global _cached_status
     if (
@@ -377,15 +523,63 @@ def check_claude_quota(
     ):
         return _cached_status
 
-    token = _read_access_token(creds_path)
-    if token is None:
-        return ClaudeQuotaStatus(checked_at=time.monotonic(), error="no-credentials")
-
+    if disk_cache_ttl is None:
+        disk_cache_ttl = float(
+            os.environ.get("QUSE_CLAUDE_CACHE_TTL", _DISK_CACHE_TTL_SECONDS)
+        )
     fetcher = _fetch_usage
     if callable(_fetch):
         fetcher = _fetch
-    _cached_status = fetcher(token)
-    return _cached_status
+
+    path = _disk_cache_path()
+    with _disk_cache_lock(path):
+        now = time.time()
+        state = _load_disk_cache(path)
+        cached = _status_from_cache(state)
+        observed_unix = state.get("observed_unix", 0)
+        if cached is not None and now - observed_unix < disk_cache_ttl:
+            _cached_status = cached
+            return cached
+        backoff_until = state.get("backoff_until", 0)
+        if isinstance(backoff_until, (int, float)) and backoff_until > now:
+            _cached_status = _failure_status(state, cached, now)
+            return _cached_status
+
+        token = _read_access_token(creds_path)
+        if token is None:
+            return ClaudeQuotaStatus(
+                checked_at=time.monotonic(), error="no-credentials"
+            )
+
+        result = fetcher(token)
+        if not result.error:
+            raw = getattr(result, "raw", None)
+            if isinstance(raw, dict):
+                _save_disk_cache(path, {"raw": raw, "observed_unix": now})
+            _cached_status = result
+            return result
+
+        failures = state.get("failures", 0)
+        if not isinstance(failures, int):
+            failures = 0
+        failures += 1
+        http_status = getattr(result, "http_status", None)
+        base = _BACKOFF_ERROR_BASE_SECONDS
+        if http_status == 429:
+            base = _BACKOFF_429_BASE_SECONDS
+        delay = min(_BACKOFF_MAX_SECONDS, base * 2 ** (failures - 1))
+        retry_after = getattr(result, "retry_after", None)
+        if isinstance(retry_after, (int, float)):
+            delay = max(delay, min(retry_after, _BACKOFF_MAX_SECONDS))
+        state.update(
+            failures=failures,
+            backoff_until=now + delay,
+            last_error=result.error,
+            last_http_status=http_status,
+        )
+        _save_disk_cache(path, state)
+        _cached_status = _failure_status(state, cached, now)
+        return _cached_status
 
 
 def reset_cache() -> None:

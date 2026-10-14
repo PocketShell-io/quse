@@ -279,7 +279,7 @@ class UsageProvider(ABC):
 
         status_obj = self.check_status()
         windows = {}
-        if not status_obj.error:
+        if not status_obj.error or getattr(status_obj, "stale", False):
             windows = self.windows(status_obj)
         return usage_window_record(
             provider=self.name,
@@ -350,6 +350,11 @@ class ClaudeUsageProvider(UsageProvider):
     def check_status(self) -> Any:
         return check_claude_quota()
 
+    def status_label(self, status_obj: Any) -> str:
+        if getattr(status_obj, "stale", False):
+            return "stale"
+        return super().status_label(status_obj)
+
     def windows(self, status_obj: Any) -> dict[str, Any]:
         return {
             "5h": status_obj.short_term,
@@ -363,6 +368,10 @@ class ClaudeUsageProvider(UsageProvider):
             "subscription": status_obj.subscription,
             "banked_resets": _banked_resets_from_claude(status_obj),
             "banked_resets_available": len(status_obj.available_resets),
+            "observed_at": getattr(status_obj, "observed_at", None),
+            "stale": bool(getattr(status_obj, "stale", False)),
+            "next_retry_at": getattr(status_obj, "next_retry_at", None),
+            "http_status": getattr(status_obj, "http_status", None),
             "windows": {
                 "five_hour": asdict(status_obj.five_hour),
                 "seven_day": asdict(status_obj.seven_day),
