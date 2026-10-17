@@ -43,6 +43,9 @@ same normalized records as JSON keyed by provider name:
 Supported providers:
 
 - `codex`
+- `codex-orin` (alias: `orin`) — a second Codex account under its own
+  `~/.codex-orin` `CODEX_HOME`; `quse codex codex-orin` shows both
+  accounts side by side
 - `claude`
 - `gemini` (aliases: `antigravity`, `agy`)
 - `zai`
@@ -60,6 +63,8 @@ Provider mapping:
   it is `7d` only.
   Codex JSON output also includes `details.banked_resets` from ChatGPT's
   rate-limit reset-credit endpoint when available.
+- `codex-orin`: identical mapping to `codex`, read from the second
+  account's `~/.codex-orin/auth.json` token.
 - `claude`: the API's short and long signals map to `5h` and `7d`.
   `details.banked_resets` lists one-time limit-reset grants (the "Resets"
   shown under Settings > Usage) from the usage endpoint's `cedar_ember` read,

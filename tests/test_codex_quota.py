@@ -364,3 +364,32 @@ def test_check_quota_no_auth(tmp_path):
 # Monitoring integration tests live in the litehive test suite — they exercise
 # litehive.observability.record_codex_quota_check against heru's UsageStatus,
 # which is a litehive-side concern.
+
+
+# --- Per-account caching (codex + codex-orin) ---
+
+
+def test_cache_is_per_account(tmp_path):
+    """Each account's CODEX_HOME caches independently.
+
+    Orin's ~/.codex-orin and the main ~/.codex must never serve each other a
+    cached status: two different ChatGPT accounts have different windows.
+    """
+    auth_a = tmp_path / "a" / "auth.json"
+    auth_b = tmp_path / "b" / "auth.json"
+    auth_a.parent.mkdir(parents=True)
+    auth_b.parent.mkdir(parents=True)
+    auth_a.write_text(json.dumps({"tokens": {"access_token": "tok-a"}}))
+    auth_b.write_text(json.dumps({"tokens": {"access_token": "tok-b"}}))
+
+    calls = []
+
+    def fake_fetch(token):
+        calls.append(token)
+        return _parse_quota_response(_make_api_response())
+
+    check_codex_quota(auth_path=auth_a, _fetch=fake_fetch)
+    check_codex_quota(auth_path=auth_b, _fetch=fake_fetch)
+    check_codex_quota(auth_path=auth_a, _fetch=fake_fetch)
+
+    assert calls == ["tok-a", "tok-b"]  # third call hit a's cache

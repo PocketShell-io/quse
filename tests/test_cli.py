@@ -377,6 +377,7 @@ def test_collect_usage_without_provider_runs_checks_in_parallel(monkeypatch):
     assert sorted(calls) == [
         "claude",
         "codex",
+        "codex-orin",
         "copilot",
         "gemini",
         "go",
@@ -385,6 +386,7 @@ def test_collect_usage_without_provider_runs_checks_in_parallel(monkeypatch):
     ]
     assert records == [
         {"provider": "codex"},
+        {"provider": "codex-orin"},
         {"provider": "claude"},
         {"provider": "zai"},
         {"provider": "copilot"},
@@ -433,3 +435,65 @@ def test_human_usage_line_uses_normalized_windows(monkeypatch):
             monkeypatch.setenv("TZ", original_tz)
         if hasattr(time, "tzset"):
             time.tzset()
+
+
+def test_codex_orin_provider_json(monkeypatch):
+    """The orin account is its own provider, read from its own auth."""
+    monkeypatch.setattr(
+        "quse.usage.check_codex_quota",
+        lambda **kwargs: CodexQuotaStatus(
+            primary_window=CodexQuotaWindow(
+                used_percent=10,
+                reset_at="2026-04-30",
+            ),
+            secondary_window=CodexQuotaWindow(
+                used_percent=5,
+                reset_at="2026-05-01",
+            ),
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["codex-orin", "--json"])
+
+    assert result.exit_code == 0
+    record = json.loads(result.stdout)
+    assert set(record) == {"codex-orin"}
+    assert record["codex-orin"]["status"] == "ok"
+    assert record["codex-orin"]["windows"]["5h"]["percent_remaining"] == 90.0
+    assert record["codex-orin"]["windows"]["7d"]["percent_remaining"] == 95.0
+
+
+def test_codex_orin_alias(monkeypatch):
+    monkeypatch.setattr(
+        "quse.usage.check_codex_quota",
+        lambda **kwargs: CodexQuotaStatus(),
+    )
+
+    result = CliRunner().invoke(app, ["orin", "--json"])
+
+    assert result.exit_code == 0
+    assert set(json.loads(result.stdout)) == {"codex-orin"}
+
+
+def test_both_codex_accounts_in_one_call(monkeypatch):
+    """`quse codex codex-orin` prints both accounts in one command."""
+    monkeypatch.setattr(
+        "quse.usage.check_codex_quota",
+        lambda **kwargs: CodexQuotaStatus(
+            primary_window=CodexQuotaWindow(
+                used_percent=40,
+                reset_at="2026-04-30",
+            ),
+            secondary_window=CodexQuotaWindow(
+                used_percent=25,
+                reset_at="2026-05-01",
+            ),
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["codex", "codex-orin"])
+
+    assert result.exit_code == 0
+    assert result.output.startswith("codex:")
+    assert "codex-orin:" in result.output
+    assert result.output.count("remaining: 60.0%") == 2

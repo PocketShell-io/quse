@@ -31,16 +31,20 @@ def _json_usage_payload(records: list[dict[str, Any]]) -> dict[str, dict[str, An
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.argument("provider", required=False)
+@click.argument("providers", required=False, nargs=-1)
 @click.option(
     "--json", "json_output", is_flag=True, help="Emit machine-readable JSON output."
 )
 def usage_command(
-    provider: str | None = None,
+    providers: tuple[str, ...],
     json_output: bool = False,
 ) -> int:
     try:
-        records = collect_usage(provider)
+        records: list[dict[str, Any]] = []
+        for provider in providers:
+            records.extend(collect_usage(provider))
+        if not records:
+            records = collect_usage(None)
     except UnknownProviderError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -55,8 +59,11 @@ def usage_command(
         )
         return 0
 
-    # Single-provider queries drop the redundant "provider:" header and dedent.
-    show_header = provider is None
+    # A single named provider keeps the compact headerless form. As soon
+    # as two or more providers are listed (e.g. `quse codex codex-orin`)
+    # — or all providers are listed — each record needs its provider
+    # header so the rows stay attributable.
+    show_header = len(providers) != 1
     for record in records:
         click.echo(format_usage_line(record, header=show_header))
     return 0

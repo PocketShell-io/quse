@@ -18,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 _USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 _RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
-_AUTH_PATH = Path.home() / ".codex" / "auth.json"
+# Alexey's main Codex account and Orin's second account each live in
+# their own CODEX_HOME; both are read with the same ChatGPT usage API.
+DEFAULT_CODEX_AUTH_PATH = Path.home() / ".codex" / "auth.json"
+CODEX_ORIN_AUTH_PATH = Path.home() / ".codex-orin" / "auth.json"
+# Legacy alias kept for callers that imported the private name.
+_AUTH_PATH = DEFAULT_CODEX_AUTH_PATH
 _CACHE_TTL_SECONDS = 60
 
 # Known Codex rate-limit spans → the unified span label. Codex reports the real
@@ -190,7 +195,9 @@ def _window_for_term(
     return None
 
 
-_cached_status: CodexQuotaStatus | None = None
+# One cache entry per account auth path, so the two Codex accounts
+# (~/.codex and ~/.codex-orin) never evict each other's status.
+_cached_statuses: dict[str, CodexQuotaStatus] = {}
 
 
 def _read_bearer_token(auth_path: Path | None = None) -> str | None:
@@ -325,27 +332,27 @@ def check_codex_quota(
 
     Fails open: if auth is missing or API call fails, returns a non-blocking status.
     """
-    global _cached_status
+    key = str((auth_path or _AUTH_PATH).resolve())
     now = time.monotonic()
 
-    if _cached_status is not None and (now - _cached_status.checked_at) < cache_ttl:
-        return _cached_status
+    cached = _cached_statuses.get(key)
+    if cached is not None and (now - cached.checked_at) < cache_ttl:
+        return cached
 
     token = _read_bearer_token(auth_path)
     if token is None:
         status = CodexQuotaStatus(checked_at=now, error="no auth token")
-        _cached_status = status
+        _cached_statuses[key] = status
         return status
 
     fetcher = _fetch_quota
     if callable(_fetch):
         fetcher = _fetch
     status = fetcher(token)
-    _cached_status = status
+    _cached_statuses[key] = status
     return status
 
 
 def reset_cache() -> None:
-    """Clear the cached quota status (useful for testing)."""
-    global _cached_status
-    _cached_status = None
+    """Clear the cached quota statuses (useful for testing)."""
+    _cached_statuses.clear()
