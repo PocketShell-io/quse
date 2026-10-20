@@ -457,7 +457,19 @@ CLAUDE_RESETS_PAYLOAD = {
 }
 
 
-def test_claude_parse_reset_grants_payload():
+class _ClaudeFixtureClock(datetime):
+    """Keep captured October reset grants before their recorded expiration."""
+
+    @classmethod
+    def now(cls, tz=None):
+        instant = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        if tz is not None:
+            return instant.astimezone(tz)
+        return instant.replace(tzinfo=None)
+
+
+def test_claude_parse_reset_grants_payload(monkeypatch):
+    monkeypatch.setattr("quse.claude_quota.datetime", _ClaudeFixtureClock)
     from quse.claude_quota import _parse_usage_response
 
     status = _parse_usage_response(CLAUDE_RESETS_PAYLOAD)
@@ -520,6 +532,7 @@ def test_claude_reset_unavailable_states():
 
 
 def test_claude_json_round_trips_reset_grants(monkeypatch):
+    monkeypatch.setattr("quse.claude_quota.datetime", _ClaudeFixtureClock)
     from quse.claude_quota import _parse_usage_response
 
     status = _parse_usage_response(CLAUDE_RESETS_PAYLOAD)

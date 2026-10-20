@@ -3,7 +3,6 @@
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-import fcntl
 import json
 import logging
 import os
@@ -419,12 +418,27 @@ def _disk_cache_lock(path: Path):
     """Serialize concurrent quse processes so only one hits the endpoint."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(path.with_suffix(".lock"), "a")
+        handle = open(path.with_suffix(".lock"), "a+b")
     except OSError:
         yield
         return
     try:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        if os.name == "nt":
+            import msvcrt  # noqa: PLC0415 -- only available on Windows
+
+            # Windows locks bytes from the current offset, including when a
+            # previous caller left the file position elsewhere. Reserve one
+            # real byte before locking; close releases the lock on every exit.
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl  # noqa: PLC0415 -- never import POSIX code at CLI startup
+
+            fcntl.flock(handle, fcntl.LOCK_EX)
         yield
     finally:
         handle.close()
