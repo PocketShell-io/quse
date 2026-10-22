@@ -96,6 +96,9 @@ def test_opencode_go_reads_native_auth_entry(tmp_path: Path, monkeypatch) -> Non
         encoding="utf-8",
     )
     monkeypatch.delenv("OPENCODE_GO_API_KEY", raising=False)
+    monkeypatch.setattr(
+        opencode_go_quota, "read_console_access_token", lambda: None
+    )
 
     assert opencode_go_quota._read_access_token(auth_path) == "go-token"
 
@@ -109,8 +112,94 @@ def test_opencode_go_api_key_environment_overrides_auth(
         encoding="utf-8",
     )
     monkeypatch.setenv("OPENCODE_GO_API_KEY", "env-token")
+    monkeypatch.setattr(
+        opencode_go_quota, "read_console_access_token", lambda: "console-token"
+    )
 
     assert opencode_go_quota._read_access_token(auth_path) == "env-token"
+
+
+def test_opencode_go_prefers_console_device_token_over_stale_file_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"opencode-go": {"type": "api", "key": "stale-file-token"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("OPENCODE_GO_API_KEY", raising=False)
+    monkeypatch.setattr(
+        opencode_go_quota, "read_console_access_token", lambda: "console-token"
+    )
+
+    assert opencode_go_quota._read_access_tokens(auth_path) == [
+        "console-token",
+        "stale-file-token",
+    ]
+    assert opencode_go_quota._read_access_token(auth_path) == "console-token"
+
+
+def test_opencode_go_falls_back_to_next_token_on_401(monkeypatch) -> None:
+    from urllib.error import HTTPError
+
+    monkeypatch.setattr(
+        opencode_go_quota,
+        "_read_access_tokens",
+        lambda auth_path=None: ["console-token", "legacy-token"],
+    )
+
+    def fake_payload(token: str, *, timeout: float = 15.0) -> dict:
+        if token == "console-token":
+            raise HTTPError(
+                "https://opencode.ai/zen/go/v1/usage",
+                401,
+                "Unauthorized",
+                {},
+                None,
+            )
+        return OPENCODE_GO_PAYLOAD
+
+    monkeypatch.setattr(opencode_go_quota, "_fetch_usage_payload", fake_payload)
+
+    status = opencode_go_quota._fetch_usage()
+
+    assert status.error is None
+    assert status.rolling is not None
+    assert status.rolling.used_percent == 17.0
+
+
+def test_opencode_go_reports_error_when_all_tokens_rejected(
+    monkeypatch,
+) -> None:
+    from urllib.error import HTTPError
+
+    monkeypatch.setattr(
+        opencode_go_quota,
+        "_read_access_tokens",
+        lambda auth_path=None: ["console-token", "legacy-token"],
+    )
+
+    def fake_payload(token: str, *, timeout: float = 15.0) -> dict:
+        raise HTTPError(
+            "https://opencode.ai/zen/go/v1/usage", 401, "Unauthorized", {}, None
+        )
+
+    monkeypatch.setattr(opencode_go_quota, "_fetch_usage_payload", fake_payload)
+
+    status = opencode_go_quota._fetch_usage()
+
+    assert status.error is not None
+    assert "401" in status.error
+
+
+def test_opencode_go_no_credentials_without_any_token(monkeypatch) -> None:
+    monkeypatch.setattr(
+        opencode_go_quota, "_read_access_tokens", lambda auth_path=None: []
+    )
+
+    status = opencode_go_quota._fetch_usage()
+
+    assert status.error == "no-credentials"
 
 
 def test_zai_prefers_opencode_auth(monkeypatch) -> None:

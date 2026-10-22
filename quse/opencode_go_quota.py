@@ -7,10 +7,10 @@ import logging
 import os
 from pathlib import Path
 import time
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from quse._opencode_auth import read_auth_token
+from quse._opencode_auth import read_auth_token, read_console_access_token
 from quse._shared import UsageWindow, normalize_reset_at
 
 logger = logging.getLogger(__name__)
@@ -21,11 +21,35 @@ _USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 _AUTH_PROVIDER = "opencode-go"
 
 
-def _read_access_token(auth_path: Path | None = None) -> str | None:
+def _read_access_tokens(auth_path: Path | None = None) -> list[str]:
+    """All usable tokens, highest priority first (de-duplicated).
+
+    Explicit ``OPENCODE_GO_API_KEY`` wins, then the live OpenCode Console
+    device credential OpenCode itself uses, then the legacy ``opencode-go``
+    API key from ``auth.json`` (known-stale after the move to device auth).
+    """
+    tokens: list[str] = []
     configured = os.environ.get("OPENCODE_GO_API_KEY")
     if isinstance(configured, str) and configured.strip():
-        return configured.strip()
-    return read_auth_token(_AUTH_PROVIDER, auth_path)
+        tokens.append(configured.strip())
+    console_token = read_console_access_token()
+    if console_token:
+        tokens.append(console_token)
+    legacy_token = read_auth_token(_AUTH_PROVIDER, auth_path)
+    if legacy_token:
+        tokens.append(legacy_token)
+    ordered: list[str] = []
+    for token in tokens:
+        if token not in ordered:
+            ordered.append(token)
+    return ordered
+
+
+def _read_access_token(auth_path: Path | None = None) -> str | None:
+    tokens = _read_access_tokens(auth_path)
+    if not tokens:
+        return None
+    return tokens[0]
 
 
 @dataclass(slots=True)
@@ -172,24 +196,50 @@ def _fetch_usage_payload(
 
 
 def _fetch_usage(*, auth_path: Path | None = None) -> OpenCodeGoQuotaStatus:
-    token = _read_access_token(auth_path)
-    if token is None:
+    tokens = _read_access_tokens(auth_path)
+    if not tokens:
         return OpenCodeGoQuotaStatus(
             checked_at=time.monotonic(), error="no-credentials"
         )
-    try:
-        data = _fetch_usage_payload(token)
-        status = _parse_usage_response(data)
-    except (
-        ValueError,
-        OSError,
-        URLError,
-        TimeoutError,
-    ) as exc:
-        logger.warning("opencode-go quota check failed (fail-open): %s", exc)
-        return OpenCodeGoQuotaStatus(checked_at=time.monotonic(), error=str(exc))
-    status.checked_at = time.monotonic()
-    return status
+    last_error: str | None = None
+    for token in tokens:
+        try:
+            data = _fetch_usage_payload(token)
+        except HTTPError as exc:
+            # A rejected token (e.g. the stale auth.json API key) must not
+            # shadow a working one: fall through to the next credential.
+            if exc.code == 401:
+                last_error = f"HTTP Error {exc.code}: Unauthorized"
+                logger.warning(
+                    "opencode-go token rejected (401), trying next credential"
+                )
+                continue
+            logger.warning("opencode-go quota check failed (fail-open): %s", exc)
+            return OpenCodeGoQuotaStatus(
+                checked_at=time.monotonic(), error=str(exc)
+            )
+        except (
+            ValueError,
+            OSError,
+            URLError,
+            TimeoutError,
+        ) as exc:
+            logger.warning("opencode-go quota check failed (fail-open): %s", exc)
+            return OpenCodeGoQuotaStatus(
+                checked_at=time.monotonic(), error=str(exc)
+            )
+        try:
+            status = _parse_usage_response(data)
+        except ValueError as exc:
+            logger.warning("opencode-go quota check failed (fail-open): %s", exc)
+            return OpenCodeGoQuotaStatus(
+                checked_at=time.monotonic(), error=str(exc)
+            )
+        status.checked_at = time.monotonic()
+        return status
+    return OpenCodeGoQuotaStatus(
+        checked_at=time.monotonic(), error=last_error or "unauthorized"
+    )
 
 
 def check_opencode_go_quota(

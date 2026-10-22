@@ -83,7 +83,8 @@ Provider mapping:
   cards are skipped because the `5h` window itself already reports its reset
   time.
 - `go`: OpenCode Go's rolling and weekly API windows map to `5h` and `7d`, and
-  its monthly API window maps to `monthly`.
+  its monthly API window maps to `monthly`. Auth prefers the OpenCode
+  Console device login, falling back to the legacy `opencode-go` API key.
 - `grok`: the weekly SuperGrok / X Premium window and the monthly credit
   window map to `7d` and `monthly` when both are present. When the API returns
   one window, it is assigned to `7d`. Weekly remaining
@@ -115,10 +116,19 @@ Z.AI credentials are resolved in this order:
    `zai-coding-plan` entry.
 2. The legacy goz config at `~/.config/goz/config.json`, using `zai_token`.
 
-OpenCode Go uses the same OpenCode auth file and the `opencode-go` entry. Run
-`/connect` in OpenCode, choose `OpenCode Go`, and paste the key from
-`opencode.ai/auth`; Quse will reuse that stored key. For a separately managed
-key, set `OPENCODE_GO_API_KEY`. Do not commit or share these values.
+OpenCode Go credentials are resolved in this order:
+
+1. `OPENCODE_GO_API_KEY` when set (explicit override for a separately
+   managed key).
+2. The live OpenCode Console device login (`opencode auth login "OpenCode
+   Console" --method device`), read from `opencode auth export` — the same
+   credential OpenCode itself uses.
+3. The legacy `opencode-go` API key from the OpenCode auth file at
+   `~/.local/share/opencode/auth.json` (stale after the move to device auth;
+   kept as fallback). Run `/connect` in OpenCode, choose `OpenCode Go`, and
+   paste the key from `opencode.ai/auth` to refresh it.
+
+Do not commit or share these values.
 
 ## Install
 
