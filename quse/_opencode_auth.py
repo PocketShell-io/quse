@@ -47,13 +47,63 @@ def read_auth_token(provider: str, auth_path: Path | None = None) -> str | None:
     return token.strip()
 
 
+def _nvm_opencode_candidates(home: Path) -> list[Path]:
+    """OpenCode binaries installed under nvm-managed node versions.
+
+    Service units (e.g. the Hub quota-server) run with a restricted ``PATH``
+    that omits version-manager shims, so ``shutil.which("opencode")`` misses
+    an nvm-installed binary even though the same user's login shell finds it.
+    Only the binary location is probed here; credential handling is unchanged
+    (read-only ``opencode auth export``).
+    """
+    root = home / ".nvm" / "versions" / "node"
+    try:
+        version_dirs = [entry for entry in root.iterdir() if entry.is_dir()]
+    except OSError:
+        return []
+
+    def _version_key(path: Path) -> tuple:
+        try:
+            return tuple(int(part) for part in path.name.lstrip("v").split("."))
+        except ValueError:
+            return ()
+
+    candidates: list[Path] = []
+    for version_dir in sorted(version_dirs, key=_version_key, reverse=True):
+        binary = version_dir / "bin" / "opencode"
+        try:
+            if binary.is_file() and os.access(binary, os.X_OK):
+                candidates.append(binary)
+        except OSError:
+            continue
+    return candidates
+
+
 def _find_opencode_executable() -> str | None:
     env_bin = os.environ.get("OPENCODE_BIN")
     if env_bin:
         if os.path.isfile(env_bin) and os.access(env_bin, os.X_OK):
             return env_bin
         return shutil.which(env_bin)
-    return shutil.which("opencode")
+    found = shutil.which("opencode")
+    if found:
+        return found
+    # Fall back to well-known install locations before giving up: restricted
+    # service environments often lack the login-shell PATH entries (nvm shims,
+    # ~/.local/bin) where OpenCode is actually installed.
+    home = Path.home()
+    static_candidates = [
+        home / ".local" / "bin" / "opencode",
+        Path("/usr/local/bin/opencode"),
+        Path("/usr/bin/opencode"),
+    ]
+    for candidate in static_candidates + _nvm_opencode_candidates(home):
+        try:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        except OSError:
+            continue
+    return None
 
 
 def _exported_console_credentials() -> list:

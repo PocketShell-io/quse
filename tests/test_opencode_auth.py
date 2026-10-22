@@ -124,6 +124,102 @@ def test_find_opencode_executable_env_override(monkeypatch, tmp_path) -> None:
     assert _opencode_auth._find_opencode_executable() is None
 
 
+def _make_executable(path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+
+
+def test_find_opencode_executable_prefers_path(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENCODE_BIN", raising=False)
+    monkeypatch.setattr(
+        _opencode_auth.shutil, "which", lambda name: "/usr/bin/opencode"
+    )
+    monkeypatch.setattr(_opencode_auth.Path, "home", lambda: tmp_path)
+
+    assert _opencode_auth._find_opencode_executable() == "/usr/bin/opencode"
+
+
+def test_find_opencode_executable_falls_back_to_nvm(
+    monkeypatch, tmp_path
+) -> None:
+    binary = (
+        tmp_path
+        / ".nvm"
+        / "versions"
+        / "node"
+        / "v24.13.1"
+        / "bin"
+        / "opencode"
+    )
+    _make_executable(binary)
+    monkeypatch.delenv("OPENCODE_BIN", raising=False)
+    monkeypatch.setattr(_opencode_auth.shutil, "which", lambda name: None)
+    monkeypatch.setattr(_opencode_auth.Path, "home", lambda: tmp_path)
+
+    assert _opencode_auth._find_opencode_executable() == str(binary)
+
+
+def test_find_opencode_executable_prefers_newest_nvm(
+    monkeypatch, tmp_path
+) -> None:
+    old_binary = (
+        tmp_path / ".nvm" / "versions" / "node" / "v20.20.2" / "bin" / "opencode"
+    )
+    new_binary = (
+        tmp_path / ".nvm" / "versions" / "node" / "v24.13.1" / "bin" / "opencode"
+    )
+    _make_executable(old_binary)
+    _make_executable(new_binary)
+    monkeypatch.delenv("OPENCODE_BIN", raising=False)
+    monkeypatch.setattr(_opencode_auth.shutil, "which", lambda name: None)
+    monkeypatch.setattr(_opencode_auth.Path, "home", lambda: tmp_path)
+
+    assert _opencode_auth._find_opencode_executable() == str(new_binary)
+
+
+def test_find_opencode_executable_skips_non_executable_nvm(
+    monkeypatch, tmp_path
+) -> None:
+    new_binary = (
+        tmp_path / ".nvm" / "versions" / "node" / "v24.15.0" / "bin" / "opencode"
+    )
+    new_binary.parent.mkdir(parents=True, exist_ok=True)
+    new_binary.write_text("#!/bin/sh\n")
+    new_binary.chmod(0o644)
+    old_binary = (
+        tmp_path / ".nvm" / "versions" / "node" / "v24.13.1" / "bin" / "opencode"
+    )
+    _make_executable(old_binary)
+    monkeypatch.delenv("OPENCODE_BIN", raising=False)
+    monkeypatch.setattr(_opencode_auth.shutil, "which", lambda name: None)
+    monkeypatch.setattr(_opencode_auth.Path, "home", lambda: tmp_path)
+
+    assert _opencode_auth._find_opencode_executable() == str(old_binary)
+
+
+def test_find_opencode_executable_falls_back_to_local_bin(
+    monkeypatch, tmp_path
+) -> None:
+    binary = tmp_path / ".local" / "bin" / "opencode"
+    _make_executable(binary)
+    monkeypatch.delenv("OPENCODE_BIN", raising=False)
+    monkeypatch.setattr(_opencode_auth.shutil, "which", lambda name: None)
+    monkeypatch.setattr(_opencode_auth.Path, "home", lambda: tmp_path)
+
+    assert _opencode_auth._find_opencode_executable() == str(binary)
+
+
+def test_find_opencode_executable_none_when_nothing_installed(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.delenv("OPENCODE_BIN", raising=False)
+    monkeypatch.setattr(_opencode_auth.shutil, "which", lambda name: None)
+    monkeypatch.setattr(_opencode_auth.Path, "home", lambda: tmp_path)
+
+    assert _opencode_auth._find_opencode_executable() is None
+
+
 def test_export_timeout_is_bounded() -> None:
     assert _opencode_auth._EXPORT_TIMEOUT_SECONDS <= 30.0
 

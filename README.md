@@ -122,7 +122,10 @@ OpenCode Go credentials are resolved in this order:
    managed key).
 2. The live OpenCode Console device login (`opencode auth login "OpenCode
    Console" --method device`), read from `opencode auth export` — the same
-   credential OpenCode itself uses.
+   credential OpenCode itself uses. The `opencode` binary is located via
+   `OPENCODE_BIN`, then `PATH`, then well-known install locations
+   (`~/.local/bin`, `/usr/local/bin`, nvm-managed node versions), so quota
+   checks also work from service units with a restricted `PATH`.
 3. The legacy `opencode-go` API key from the OpenCode auth file at
    `~/.local/share/opencode/auth.json` (stale after the move to device auth;
    kept as fallback). Run `/connect` in OpenCode, choose `OpenCode Go`, and
