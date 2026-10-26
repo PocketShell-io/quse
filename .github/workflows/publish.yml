@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Guard so a hung step can never burn the org's Actions quota.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -30,6 +32,8 @@ jobs:
   publish-pypi:
     needs: build
     runs-on: ubuntu-latest
+    # Guard so a hung step can never burn the org's Actions quota.
+    timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@v5
         with:

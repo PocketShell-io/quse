@@ -6,10 +6,18 @@ on:
     branches:
       - main
 
+# A newer event on the same ref supersedes the stale run (PR pushes) instead
+# of stacking duplicate test runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    # Guard so a hung step can never burn the org's Actions quota.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
