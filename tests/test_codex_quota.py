@@ -125,13 +125,15 @@ def test_window_labelled_from_actual_span_not_slot():
     assert status.long_term.percent_remaining == 75.0
 
 
-def test_weekly_primary_window_drives_limit_reached_threshold():
+@pytest.mark.parametrize("used_percent", [79.0, 80.0, 83.0, 85.0, 90.0, 99.0, 100.0])
+@pytest.mark.parametrize("provider_limited", [False, True])
+def test_weekly_primary_window_preserves_provider_exhaustion(used_percent, provider_limited):
     status = _parse_quota_response(
         {
             "rate_limit": {
-                "limit_reached": False,
+                "limit_reached": provider_limited,
                 "primary_window": {
-                    "used_percent": 90.0,
+                    "used_percent": used_percent,
                     "limit_window_seconds": 604800,
                 },
                 "secondary_window": None,
@@ -139,7 +141,9 @@ def test_weekly_primary_window_drives_limit_reached_threshold():
         }
     )
 
-    assert status.limit_reached is True
+    # Callers own reserve policy (Hub requires 15%); the collector must not
+    # invent provider exhaustion at 80% usage. An actual refusal always wins.
+    assert status.limit_reached is (provider_limited or used_percent >= 100.0)
 
 
 def test_single_window_is_weekly_even_without_duration_metadata():

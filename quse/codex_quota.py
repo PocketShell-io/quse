@@ -234,7 +234,7 @@ def _parse_quota_response(data: dict) -> CodexQuotaStatus:
         limit_reached=bool(rate_limit.get("limit_reached", False))
         or (
             long_term_window is not None
-            and long_term_window.used_percent >= 80.0
+            and long_term_window.used_percent >= 100.0
         ),
         checked_at=time.monotonic(),
     )
