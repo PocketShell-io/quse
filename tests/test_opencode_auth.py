@@ -235,3 +235,81 @@ def test_subprocess_timeout_maps_to_none(monkeypatch) -> None:
     monkeypatch.setattr(_opencode_auth.subprocess, "run", slow)
 
     assert _opencode_auth.read_console_access_token() is None
+
+
+def test_read_orin_console_access_token_from_dedicated_data_home(
+    monkeypatch, tmp_path
+) -> None:
+    orin_home = tmp_path / "opencode-orin"
+    (orin_home / "opencode").mkdir(parents=True)
+    monkeypatch.setattr(_opencode_auth, "OPENCODE_ORIN_DATA_HOME", orin_home)
+    monkeypatch.setattr(
+        _opencode_auth, "_find_opencode_executable", lambda: "/usr/bin/opencode"
+    )
+    seen_env = {}
+
+    def fake_run(cmd, *, capture_output, text, timeout, env=None):
+        if env is not None:
+            seen_env["xdg"] = env.get("XDG_DATA_HOME")
+        payload = [
+            {
+                "active": True,
+                "label": "Default",
+                "value": {
+                    "type": "oauth",
+                    "methodID": "device",
+                    "access": "st_orin_xdg",
+                },
+            }
+        ]
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    monkeypatch.setattr(_opencode_auth.subprocess, "run", fake_run)
+
+    assert _opencode_auth.read_orin_console_access_token() == "st_orin_xdg"
+    assert seen_env["xdg"] == str(orin_home)
+
+
+def test_read_orin_console_access_token_from_shared_store_email_and_main_excludes_it(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        _opencode_auth, "OPENCODE_ORIN_DATA_HOME", tmp_path / "missing-orin"
+    )
+    monkeypatch.setattr(
+        _opencode_auth, "_find_opencode_executable", lambda: "/usr/bin/opencode"
+    )
+    payload = [
+        {
+            "active": False,
+            "label": "Default",
+            "value": {
+                "type": "oauth",
+                "methodID": "device",
+                "access": "st_main",
+                "metadata": {"email": "alexey.s.grigoriev@gmail.com"},
+            },
+        },
+        {
+            "active": True,
+            "label": "Default",
+            "value": {
+                "type": "oauth",
+                "methodID": "device",
+                "access": "st_orin",
+                "metadata": {"email": "orin@datatalks.club"},
+            },
+        },
+    ]
+    monkeypatch.setattr(
+        _opencode_auth.subprocess,
+        "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            a[0], 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    assert _opencode_auth.read_orin_console_access_token() == "st_orin"
+    assert _opencode_auth.read_console_access_token() == "st_main"

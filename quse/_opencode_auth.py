@@ -19,6 +19,7 @@ _DEFAULT_AUTH_PATH = Path.home() / ".local" / "share" / "opencode" / "auth.json"
 OPENCODE_CONSOLE_INTEGRATION_ID = "opencode"
 _OPENCODE_DEVICE_METHOD_ID = "device"
 _EXPORT_TIMEOUT_SECONDS = 10.0
+OPENCODE_ORIN_DATA_HOME = Path.home() / ".local" / "share" / "opencode-orin"
 
 
 def default_auth_path() -> Path:
@@ -106,17 +107,21 @@ def _find_opencode_executable() -> str | None:
     return None
 
 
-def _exported_console_credentials() -> list:
+def _exported_console_credentials(data_home: Path | None = None) -> list:
     """Return raw ``opencode auth export opencode`` entries, or []. Fail-open."""
     executable = _find_opencode_executable()
     if not executable:
         return []
+    env = None
+    if data_home is not None:
+        env = {**os.environ, "XDG_DATA_HOME": str(data_home)}
     try:
         result = subprocess.run(
             [executable, "auth", "export", OPENCODE_CONSOLE_INTEGRATION_ID],
             capture_output=True,
             text=True,
             timeout=_EXPORT_TIMEOUT_SECONDS,
+            env=env,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.warning("opencode auth export failed (fail-open): %s", exc)
@@ -139,11 +144,36 @@ def _exported_console_credentials() -> list:
     return data
 
 
-def _select_device_access_token(entries: list) -> str | None:
+def _is_orin_entry(entry: dict) -> bool:
+    """True when an exported Console credential belongs to Orin's account."""
+    value = entry.get("value")
+    if isinstance(value, dict):
+        metadata = value.get("metadata")
+        if isinstance(metadata, dict):
+            email = metadata.get("email")
+            if isinstance(email, str) and "orin" in email.split("@", 1)[0].lower():
+                return True
+    label = entry.get("label")
+    if isinstance(label, str) and "orin" in label.lower():
+        return True
+    return False
+
+
+def _select_device_access_token(
+    entries: list,
+    *,
+    orin_only: bool = False,
+    exclude_orin: bool = False,
+) -> str | None:
     """Pick the Console device OAuth access token, preferring the active one."""
     candidates: list[tuple[bool, str]] = []
     for entry in entries:
         if not isinstance(entry, dict):
+            continue
+        is_orin = _is_orin_entry(entry)
+        if orin_only and not is_orin:
+            continue
+        if exclude_orin and is_orin:
             continue
         value = entry.get("value")
         if not isinstance(value, dict):
@@ -171,9 +201,36 @@ def read_console_access_token() -> str | None:
     yields ``None`` so callers can fall back to the legacy API key.
     """
     try:
-        return _select_device_access_token(_exported_console_credentials())
+        return _select_device_access_token(
+            _exported_console_credentials(), exclude_orin=True
+        )
     except Exception as exc:  # fail-open: never break quota checks here
         logger.warning(
             "opencode console credential read failed (fail-open): %s", exc
+        )
+        return None
+
+
+def read_orin_console_access_token(data_home: Path | None = None) -> str | None:
+    """Read Orin's OpenCode Console device access token (fail-open).
+
+    Checks Orin's dedicated ``XDG_DATA_HOME`` (``~/.local/share/opencode-orin``)
+    first when it contains an ``opencode`` directory, then falls back to any
+    Orin-labeled/Orin-email entry in the default OpenCode Console store.
+    """
+    try:
+        orin_home = data_home or OPENCODE_ORIN_DATA_HOME
+        if (orin_home / "opencode").is_dir():
+            token = _select_device_access_token(
+                _exported_console_credentials(data_home=orin_home)
+            )
+            if token:
+                return token
+        return _select_device_access_token(
+            _exported_console_credentials(), orin_only=True
+        )
+    except Exception as exc:  # fail-open: never break quota checks here
+        logger.warning(
+            "orin opencode console credential read failed (fail-open): %s", exc
         )
         return None

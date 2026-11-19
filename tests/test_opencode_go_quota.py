@@ -273,6 +273,27 @@ def test_go_orin_env_var_overrides_auth_file(tmp_path: Path, monkeypatch) -> Non
     ) == ["orin-env-token", "orin-file-token"]
 
 
+def test_go_orin_reads_orin_console_device_token(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENCODE_GO_ORIN_API_KEY", raising=False)
+    monkeypatch.setattr(
+        opencode_go_quota, "read_console_access_token", lambda: "main-console-token"
+    )
+    monkeypatch.setattr(
+        opencode_go_quota,
+        "read_orin_console_access_token",
+        lambda: "orin-console-token",
+    )
+    monkeypatch.setattr(
+        opencode_go_quota,
+        "OPENCODE_GO_ORIN_AUTH_PATH",
+        tmp_path / "missing" / "auth.json",
+    )
+
+    assert opencode_go_quota._read_access_tokens(orin=True) == [
+        "orin-console-token"
+    ]
+
+
 def test_go_orin_no_credentials_from_main_account_only(
     tmp_path: Path, monkeypatch
 ) -> None:

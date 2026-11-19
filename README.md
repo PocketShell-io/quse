@@ -139,7 +139,13 @@ read here, so the two accounts can never report the same usage:
 
 1. `OPENCODE_GO_ORIN_API_KEY` when set (explicit override for a separately
    managed key).
-2. The legacy `opencode-go` API key from Orin's own OpenCode auth file at
+2. Orin's OpenCode Console device login via `opencode auth export opencode`:
+   first from Orin's dedicated `XDG_DATA_HOME` (`~/.local/share/opencode-orin`
+   when `~/.local/share/opencode-orin/opencode` exists, e.g. logged in with
+   `XDG_DATA_HOME=~/.local/share/opencode-orin opencode auth login "OpenCode Console" --method device`),
+   otherwise any Orin-labeled or `orin@...` email entry in the default
+   OpenCode Console store.
+3. The legacy `opencode-go` API key from Orin's own OpenCode auth file at
    `~/.local/share/opencode-orin/auth.json` (same layout as the main
    account's auth file).
 

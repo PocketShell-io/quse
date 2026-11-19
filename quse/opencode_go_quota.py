@@ -10,7 +10,11 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from quse._opencode_auth import read_auth_token, read_console_access_token
+from quse._opencode_auth import (
+    read_auth_token,
+    read_console_access_token,
+    read_orin_console_access_token,
+)
 from quse._shared import UsageWindow, normalize_reset_at
 
 logger = logging.getLogger(__name__)
@@ -48,6 +52,9 @@ def _read_access_tokens(
         configured = os.environ.get(_OPENCODE_GO_ORIN_API_KEY_ENV)
         if isinstance(configured, str) and configured.strip():
             tokens.append(configured.strip())
+        orin_console_token = read_orin_console_access_token()
+        if orin_console_token:
+            tokens.append(orin_console_token)
         legacy_token = read_auth_token(
             _AUTH_PROVIDER, auth_path or OPENCODE_GO_ORIN_AUTH_PATH
         )
