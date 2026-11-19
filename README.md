@@ -82,11 +82,11 @@ Provider mapping:
   cards are skipped because the `5h` window itself already reports its reset
   time.
 - `go`: OpenCode Go's rolling and weekly API windows map to `5h` and `7d`, and
-  its monthly API window maps to `monthly`. Auth prefers the OpenCode
-  Console device login, falling back to the legacy `opencode-go` API key.
-- `go-orin`: identical mapping to `go`, read with Orin's own OpenCode Go
-  credential (see the credential resolution below); the main account's
-  Console device login and auth file are deliberately never used here.
+  its monthly API window maps to `monthly`. Auth uses the OpenCode Console
+  device login (`opencode auth login "OpenCode Console" --method device`).
+- `go-orin`: identical mapping to `go`, read with Orin's own OpenCode Console
+  device login (see the credential resolution below); the main account's
+  Console device login is deliberately never used here.
 - `grok`: the weekly SuperGrok / X Premium window and the monthly credit
   window map to `7d` and `monthly` when both are present. When the API returns
   one window, it is assigned to `7d`. Weekly remaining
@@ -118,36 +118,22 @@ Z.AI credentials are resolved in this order:
    `zai-coding-plan` entry.
 2. The legacy goz config at `~/.config/goz/config.json`, using `zai_token`.
 
-OpenCode Go credentials are resolved in this order:
+OpenCode Go credentials use the OpenCode Console device login (`opencode auth
+login "OpenCode Console" --method device`), read from `opencode auth export
+opencode` — the same credential OpenCode itself uses. The `opencode` binary is
+located via `OPENCODE_BIN`, then `PATH`, then well-known install locations
+(`~/.local/bin`, `/usr/local/bin`, nvm-managed node versions), so quota checks
+also work from service units with a restricted `PATH`.
 
-1. `OPENCODE_GO_API_KEY` when set (explicit override for a separately
-   managed key).
-2. The live OpenCode Console device login (`opencode auth login "OpenCode
-   Console" --method device`), read from `opencode auth export` — the same
-   credential OpenCode itself uses. The `opencode` binary is located via
-   `OPENCODE_BIN`, then `PATH`, then well-known install locations
-   (`~/.local/bin`, `/usr/local/bin`, nvm-managed node versions), so quota
-   checks also work from service units with a restricted `PATH`.
-3. The legacy `opencode-go` API key from the OpenCode auth file at
-   `~/.local/share/opencode/auth.json` (stale after the move to device auth;
-   kept as fallback). Run `/connect` in OpenCode, choose `OpenCode Go`, and
-   paste the key from `opencode.ai/auth` to refresh it.
+OpenCode Go credentials for Orin's account (`go-orin`) are resolved via the
+OpenCode Console device flow in this order — the main account's Console device
+login is never read here, so the two accounts can never report the same usage:
 
-OpenCode Go credentials for Orin's account (`go-orin`) are resolved in this
-order — the main account's Console device login and auth file are never
-read here, so the two accounts can never report the same usage:
-
-1. `OPENCODE_GO_ORIN_API_KEY` when set (explicit override for a separately
-   managed key).
-2. Orin's OpenCode Console device login via `opencode auth export opencode`:
-   first from Orin's dedicated `XDG_DATA_HOME` (`~/.local/share/opencode-orin`
-   when `~/.local/share/opencode-orin/opencode` exists, e.g. logged in with
-   `XDG_DATA_HOME=~/.local/share/opencode-orin opencode auth login "OpenCode Console" --method device`),
-   otherwise any Orin-labeled or `orin@...` email entry in the default
-   OpenCode Console store.
-3. The legacy `opencode-go` API key from Orin's own OpenCode auth file at
-   `~/.local/share/opencode-orin/auth.json` (same layout as the main
-   account's auth file).
+1. Orin's dedicated `XDG_DATA_HOME` (`~/.local/share/opencode-orin` when
+   `~/.local/share/opencode-orin/opencode` exists, e.g. logged in with
+   `XDG_DATA_HOME=~/.local/share/opencode-orin opencode auth login "OpenCode Console" --method device`).
+2. Any Orin-labeled or `orin@...` email entry in the default OpenCode Console
+   store (`opencode auth export opencode`).
 
 Do not commit or share these values.
 

@@ -89,54 +89,22 @@ def test_opencode_go_human_output_uses_canonical_window_names(monkeypatch) -> No
     assert "monthly:\n" in result.output
 
 
-def test_opencode_go_reads_native_auth_entry(tmp_path: Path, monkeypatch) -> None:
-    auth_path = tmp_path / "auth.json"
-    auth_path.write_text(
-        json.dumps({"opencode-go": {"type": "api", "key": "go-token"}}),
-        encoding="utf-8",
+def test_opencode_go_reads_console_device_token(monkeypatch) -> None:
+    monkeypatch.setattr(
+        opencode_go_quota, "read_console_access_token", lambda: "console-token"
     )
-    monkeypatch.delenv("OPENCODE_GO_API_KEY", raising=False)
+
+    assert opencode_go_quota._read_access_tokens() == ["console-token"]
+    assert opencode_go_quota._read_access_token() == "console-token"
+
+
+def test_opencode_go_returns_no_credentials_without_device_login(monkeypatch) -> None:
     monkeypatch.setattr(
         opencode_go_quota, "read_console_access_token", lambda: None
     )
 
-    assert opencode_go_quota._read_access_token(auth_path) == "go-token"
-
-
-def test_opencode_go_api_key_environment_overrides_auth(
-    tmp_path: Path, monkeypatch
-) -> None:
-    auth_path = tmp_path / "auth.json"
-    auth_path.write_text(
-        json.dumps({"opencode-go": {"type": "api", "key": "file-token"}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("OPENCODE_GO_API_KEY", "env-token")
-    monkeypatch.setattr(
-        opencode_go_quota, "read_console_access_token", lambda: "console-token"
-    )
-
-    assert opencode_go_quota._read_access_token(auth_path) == "env-token"
-
-
-def test_opencode_go_prefers_console_device_token_over_stale_file_key(
-    tmp_path: Path, monkeypatch
-) -> None:
-    auth_path = tmp_path / "auth.json"
-    auth_path.write_text(
-        json.dumps({"opencode-go": {"type": "api", "key": "stale-file-token"}}),
-        encoding="utf-8",
-    )
-    monkeypatch.delenv("OPENCODE_GO_API_KEY", raising=False)
-    monkeypatch.setattr(
-        opencode_go_quota, "read_console_access_token", lambda: "console-token"
-    )
-
-    assert opencode_go_quota._read_access_tokens(auth_path) == [
-        "console-token",
-        "stale-file-token",
-    ]
-    assert opencode_go_quota._read_access_token(auth_path) == "console-token"
+    assert opencode_go_quota._read_access_tokens() == []
+    assert opencode_go_quota._read_access_token() is None
 
 
 def test_opencode_go_falls_back_to_next_token_on_401(monkeypatch) -> None:
@@ -205,76 +173,7 @@ def test_opencode_go_no_credentials_without_any_token(monkeypatch) -> None:
 # --- Orin's account (go-orin provider) ---
 
 
-def test_go_orin_reads_orin_auth_entry(tmp_path: Path, monkeypatch) -> None:
-    """Orin's key comes from Orin's own auth file, never the main account's."""
-    monkeypatch.setenv("OPENCODE_GO_API_KEY", "main-env-token")
-    monkeypatch.setattr(
-        opencode_go_quota, "read_console_access_token", lambda: "console-token"
-    )
-    main_auth = tmp_path / "main" / "auth.json"
-    main_auth.parent.mkdir(parents=True)
-    main_auth.write_text(
-        json.dumps({"opencode-go": {"type": "api", "key": "main-token"}}),
-        encoding="utf-8",
-    )
-    orin_auth = tmp_path / "opencode-orin" / "auth.json"
-    orin_auth.parent.mkdir(parents=True)
-    orin_auth.write_text(
-        json.dumps({"opencode-go": {"type": "api", "key": "orin-token"}}),
-        encoding="utf-8",
-    )
-
-    # Orin: only orin-specific sources — no main env var, no console token,
-    # no main auth file.
-    assert opencode_go_quota._read_access_tokens(orin_auth, orin=True) == [
-        "orin-token"
-    ]
-    assert opencode_go_quota._read_access_token(orin_auth, orin=True) == "orin-token"
-    # Main account: unchanged resolution order.
-    assert opencode_go_quota._read_access_tokens(main_auth) == [
-        "main-env-token",
-        "console-token",
-        "main-token",
-    ]
-
-
-def test_go_orin_defaults_to_orin_auth_path(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("OPENCODE_GO_ORIN_API_KEY", raising=False)
-    monkeypatch.setattr(
-        opencode_go_quota, "read_console_access_token", lambda: "console-token"
-    )
-    orin_auth = tmp_path / "opencode-orin" / "auth.json"
-    orin_auth.parent.mkdir(parents=True)
-    orin_auth.write_text(
-        json.dumps({"opencode-go": {"type": "api", "key": "orin-token"}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        opencode_go_quota, "OPENCODE_GO_ORIN_AUTH_PATH", orin_auth
-    )
-
-    assert opencode_go_quota._read_access_tokens(orin=True) == ["orin-token"]
-
-
-def test_go_orin_env_var_overrides_auth_file(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OPENCODE_GO_ORIN_API_KEY", "orin-env-token")
-    monkeypatch.setenv("OPENCODE_GO_API_KEY", "main-env-token")
-    monkeypatch.setattr(
-        opencode_go_quota, "read_console_access_token", lambda: "console-token"
-    )
-    auth_path = tmp_path / "auth.json"
-    auth_path.write_text(
-        json.dumps({"opencode-go": {"type": "api", "key": "orin-file-token"}}),
-        encoding="utf-8",
-    )
-
-    assert opencode_go_quota._read_access_tokens(
-        auth_path, orin=True
-    ) == ["orin-env-token", "orin-file-token"]
-
-
-def test_go_orin_reads_orin_console_device_token(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("OPENCODE_GO_ORIN_API_KEY", raising=False)
+def test_go_orin_reads_orin_console_device_token(monkeypatch) -> None:
     monkeypatch.setattr(
         opencode_go_quota, "read_console_access_token", lambda: "main-console-token"
     )
@@ -283,35 +182,21 @@ def test_go_orin_reads_orin_console_device_token(tmp_path: Path, monkeypatch) ->
         "read_orin_console_access_token",
         lambda: "orin-console-token",
     )
-    monkeypatch.setattr(
-        opencode_go_quota,
-        "OPENCODE_GO_ORIN_AUTH_PATH",
-        tmp_path / "missing" / "auth.json",
-    )
 
     assert opencode_go_quota._read_access_tokens(orin=True) == [
         "orin-console-token"
     ]
+    assert opencode_go_quota._read_access_token(orin=True) == "orin-console-token"
+    assert opencode_go_quota._read_access_tokens() == ["main-console-token"]
 
 
-def test_go_orin_no_credentials_from_main_account_only(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Without orin-specific sources, go-orin must not borrow the main account."""
-    monkeypatch.delenv("OPENCODE_GO_ORIN_API_KEY", raising=False)
-    monkeypatch.setenv("OPENCODE_GO_API_KEY", "main-env-token")
+def test_go_orin_no_credentials_from_main_account_only(monkeypatch) -> None:
+    """Without orin-specific device login, go-orin must not borrow the main account."""
     monkeypatch.setattr(
         opencode_go_quota, "read_console_access_token", lambda: "console-token"
     )
-    main_auth = tmp_path / "main-auth.json"
-    main_auth.write_text(
-        json.dumps({"opencode-go": {"type": "api", "key": "main-token"}}),
-        encoding="utf-8",
-    )
     monkeypatch.setattr(
-        opencode_go_quota,
-        "OPENCODE_GO_ORIN_AUTH_PATH",
-        tmp_path / "missing" / "auth.json",
+        opencode_go_quota, "read_orin_console_access_token", lambda: None
     )
 
     status = opencode_go_quota._fetch_usage(orin=True)

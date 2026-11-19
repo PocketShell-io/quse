@@ -4,14 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import logging
-import os
 from pathlib import Path
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from quse._opencode_auth import (
-    read_auth_token,
     read_console_access_token,
     read_orin_console_access_token,
 )
@@ -22,59 +20,20 @@ logger = logging.getLogger(__name__)
 _CACHE_TTL_SECONDS = 60
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
-_AUTH_PROVIDER = "opencode-go"
-
-# Orin's OpenCode Go account (the `go-orin` provider): its own API key env
-# var and its own OpenCode auth file (~/.local/share/opencode-orin), the
-# same layout OpenCode itself uses for the main account. The Console device
-# login is the MAIN account's credential, so orin deliberately never falls
-# back to it — both providers must never report the same account twice.
-OPENCODE_GO_ORIN_AUTH_PATH = (
-    Path.home() / ".local" / "share" / "opencode-orin" / "auth.json"
-)
-_OPENCODE_GO_ORIN_API_KEY_ENV = "OPENCODE_GO_ORIN_API_KEY"
 
 
 def _read_access_tokens(
     auth_path: Path | None = None, *, orin: bool = False
 ) -> list[str]:
-    """All usable tokens, highest priority first (de-duplicated).
-
-    Main account: explicit ``OPENCODE_GO_API_KEY`` wins, then the live
-    OpenCode Console device credential OpenCode itself uses, then the legacy
-    ``opencode-go`` API key from ``auth.json`` (known-stale after the move to
-    device auth). Orin's account reads only Orin-specific sources: the
-    ``OPENCODE_GO_ORIN_API_KEY`` override and the legacy key from Orin's own
-    ``opencode-orin`` auth file.
-    """
-    tokens: list[str] = []
+    """Usable OpenCode Console device tokens (empty when not logged in)."""
+    del auth_path
     if orin:
-        configured = os.environ.get(_OPENCODE_GO_ORIN_API_KEY_ENV)
-        if isinstance(configured, str) and configured.strip():
-            tokens.append(configured.strip())
-        orin_console_token = read_orin_console_access_token()
-        if orin_console_token:
-            tokens.append(orin_console_token)
-        legacy_token = read_auth_token(
-            _AUTH_PROVIDER, auth_path or OPENCODE_GO_ORIN_AUTH_PATH
-        )
-        if legacy_token:
-            tokens.append(legacy_token)
+        token = read_orin_console_access_token()
     else:
-        configured = os.environ.get("OPENCODE_GO_API_KEY")
-        if isinstance(configured, str) and configured.strip():
-            tokens.append(configured.strip())
-        console_token = read_console_access_token()
-        if console_token:
-            tokens.append(console_token)
-        legacy_token = read_auth_token(_AUTH_PROVIDER, auth_path)
-        if legacy_token:
-            tokens.append(legacy_token)
-    ordered: list[str] = []
-    for token in tokens:
-        if token not in ordered:
-            ordered.append(token)
-    return ordered
+        token = read_console_access_token()
+    if token:
+        return [token]
+    return []
 
 
 def _read_access_token(
@@ -244,8 +203,6 @@ def _fetch_usage(
         try:
             data = _fetch_usage_payload(token)
         except HTTPError as exc:
-            # A rejected token (e.g. the stale auth.json API key) must not
-            # shadow a working one: fall through to the next credential.
             if exc.code == 401:
                 last_error = f"HTTP Error {exc.code}: Unauthorized"
                 logger.warning(

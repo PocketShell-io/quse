@@ -14,8 +14,7 @@ _DEFAULT_AUTH_PATH = Path.home() / ".local" / "share" / "opencode" / "auth.json"
 
 #: Integration ID OpenCode uses for the Console device login
 #: (``opencode auth login "OpenCode Console" --method device``). Its OAuth
-#: access token is accepted by the OpenCode Go usage API, unlike the stale
-#: ``opencode-go`` API key that older logins left in ``auth.json``.
+#: access token is used by the OpenCode Go usage API.
 OPENCODE_CONSOLE_INTEGRATION_ID = "opencode"
 _OPENCODE_DEVICE_METHOD_ID = "device"
 _EXPORT_TIMEOUT_SECONDS = 10.0
@@ -197,8 +196,8 @@ def read_console_access_token() -> str | None:
     """Read the OpenCode Console device access token OpenCode itself uses.
 
     Read-only: quse never writes to or refreshes OpenCode's credential store
-    (the opencode service owns refresh); a missing/expired token simply
-    yields ``None`` so callers can fall back to the legacy API key.
+    (the opencode service owns refresh); a missing/expired token yields
+    ``None``.
     """
     try:
         return _select_device_access_token(
