@@ -43,15 +43,14 @@ same normalized records as JSON keyed by provider name:
 Supported providers:
 
 - `codex`
-- `codex-orin` (alias: `orin`) — a second Codex account under its own
-  `~/.codex-orin` `CODEX_HOME`; `quse codex codex-orin` shows both
-  accounts side by side
 - `claude`
 - `gemini` (aliases: `antigravity`, `agy`)
 - `zai`
 - `copilot`
 - `grok` (alias: `grok-build`)
 - `go`
+- `go-orin` (alias: `orin`) — Orin's OpenCode Go account under its own
+  credential store; `quse go go-orin` shows both accounts side by side
 
 Provider mapping:
 
@@ -85,6 +84,9 @@ Provider mapping:
 - `go`: OpenCode Go's rolling and weekly API windows map to `5h` and `7d`, and
   its monthly API window maps to `monthly`. Auth prefers the OpenCode
   Console device login, falling back to the legacy `opencode-go` API key.
+- `go-orin`: identical mapping to `go`, read with Orin's own OpenCode Go
+  credential (see the credential resolution below); the main account's
+  Console device login and auth file are deliberately never used here.
 - `grok`: the weekly SuperGrok / X Premium window and the monthly credit
   window map to `7d` and `monthly` when both are present. When the API returns
   one window, it is assigned to `7d`. Weekly remaining
@@ -130,6 +132,16 @@ OpenCode Go credentials are resolved in this order:
    `~/.local/share/opencode/auth.json` (stale after the move to device auth;
    kept as fallback). Run `/connect` in OpenCode, choose `OpenCode Go`, and
    paste the key from `opencode.ai/auth` to refresh it.
+
+OpenCode Go credentials for Orin's account (`go-orin`) are resolved in this
+order — the main account's Console device login and auth file are never
+read here, so the two accounts can never report the same usage:
+
+1. `OPENCODE_GO_ORIN_API_KEY` when set (explicit override for a separately
+   managed key).
+2. The legacy `opencode-go` API key from Orin's own OpenCode auth file at
+   `~/.local/share/opencode-orin/auth.json` (same layout as the main
+   account's auth file).
 
 Do not commit or share these values.
 

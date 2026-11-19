@@ -10,6 +10,10 @@ from quse.cli import app
 from quse.codex_quota import CodexQuotaStatus, CodexQuotaWindow, CodexResetCredit
 from quse.copilot_quota import CopilotQuotaStatus
 from quse.grok_quota import GrokQuotaStatus, GrokQuotaWindow, GrokReset
+from quse.opencode_go_quota import (
+    OpenCodeGoQuotaStatus,
+    OpenCodeGoQuotaWindow,
+)
 from quse.usage import (
     collect_usage,
     format_usage_line,
@@ -377,21 +381,21 @@ def test_collect_usage_without_provider_runs_checks_in_parallel(monkeypatch):
     assert sorted(calls) == [
         "claude",
         "codex",
-        "codex-orin",
         "copilot",
         "gemini",
         "go",
+        "go-orin",
         "grok",
         "zai",
     ]
     assert records == [
         {"provider": "codex"},
-        {"provider": "codex-orin"},
         {"provider": "claude"},
         {"provider": "zai"},
         {"provider": "copilot"},
         {"provider": "grok"},
         {"provider": "go"},
+        {"provider": "go-orin"},
         {"provider": "gemini"},
     ]
     assert elapsed < 0.25
@@ -437,63 +441,96 @@ def test_human_usage_line_uses_normalized_windows(monkeypatch):
             time.tzset()
 
 
-def test_codex_orin_provider_json(monkeypatch):
-    """The orin account is its own provider, read from its own auth."""
-    monkeypatch.setattr(
-        "quse.usage.check_codex_quota",
-        lambda **kwargs: CodexQuotaStatus(
-            primary_window=CodexQuotaWindow(
-                used_percent=10,
-                reset_at="2026-04-30",
-            ),
-            secondary_window=CodexQuotaWindow(
-                used_percent=5,
-                reset_at="2026-05-01",
-            ),
+def _make_go_status():
+    from quse._shared import normalize_reset_at
+
+    return OpenCodeGoQuotaStatus(
+        rolling=OpenCodeGoQuotaWindow(
+            used_percent=10,
+            reset_at=normalize_reset_at("2026-04-30T00:00:00Z"),
+            window="5h",
+        ),
+        weekly=OpenCodeGoQuotaWindow(
+            used_percent=5,
+            reset_at=normalize_reset_at("2026-05-01T00:00:00Z"),
+            window="weekly",
+        ),
+        monthly=OpenCodeGoQuotaWindow(
+            used_percent=2,
+            reset_at=normalize_reset_at("2026-05-20T00:00:00Z"),
+            window="monthly",
         ),
     )
 
-    result = CliRunner().invoke(app, ["codex-orin", "--json"])
+
+def test_go_orin_provider_json(monkeypatch):
+    """The orin OpenCode Go account is its own provider, read separately."""
+    calls = []
+
+    def fake_check(*, orin=False):
+        calls.append(orin)
+        return _make_go_status()
+
+    monkeypatch.setattr("quse.usage.check_opencode_go_quota", fake_check)
+
+    result = CliRunner().invoke(app, ["go-orin", "--json"])
 
     assert result.exit_code == 0
+    assert calls == [True]
     record = json.loads(result.stdout)
-    assert set(record) == {"codex-orin"}
-    assert record["codex-orin"]["status"] == "ok"
-    assert record["codex-orin"]["windows"]["5h"]["percent_remaining"] == 90.0
-    assert record["codex-orin"]["windows"]["7d"]["percent_remaining"] == 95.0
+    assert set(record) == {"go-orin"}
+    assert record["go-orin"]["status"] == "ok"
+    assert record["go-orin"]["windows"]["5h"]["percent_remaining"] == 90.0
+    assert record["go-orin"]["windows"]["7d"]["percent_remaining"] == 95.0
+    assert record["go-orin"]["windows"]["monthly"]["percent_remaining"] == 98.0
 
 
-def test_codex_orin_alias(monkeypatch):
+def test_orin_alias(monkeypatch):
     monkeypatch.setattr(
-        "quse.usage.check_codex_quota",
-        lambda **kwargs: CodexQuotaStatus(),
+        "quse.usage.check_opencode_go_quota", lambda *, orin=False: _make_go_status()
     )
 
     result = CliRunner().invoke(app, ["orin", "--json"])
 
     assert result.exit_code == 0
-    assert set(json.loads(result.stdout)) == {"codex-orin"}
+    assert set(json.loads(result.stdout)) == {"go-orin"}
 
 
-def test_both_codex_accounts_in_one_call(monkeypatch):
-    """`quse codex codex-orin` prints both accounts in one command."""
-    monkeypatch.setattr(
-        "quse.usage.check_codex_quota",
-        lambda **kwargs: CodexQuotaStatus(
-            primary_window=CodexQuotaWindow(
-                used_percent=40,
-                reset_at="2026-04-30",
-            ),
-            secondary_window=CodexQuotaWindow(
-                used_percent=25,
-                reset_at="2026-05-01",
-            ),
-        ),
-    )
+def test_main_go_provider_reads_main_account(monkeypatch):
+    """The main `go` provider must not query Orin's account."""
+    calls = []
 
-    result = CliRunner().invoke(app, ["codex", "codex-orin"])
+    def fake_check(*, orin=False):
+        calls.append(orin)
+        return _make_go_status()
+
+    monkeypatch.setattr("quse.usage.check_opencode_go_quota", fake_check)
+
+    result = CliRunner().invoke(app, ["go", "--json"])
 
     assert result.exit_code == 0
-    assert result.output.startswith("codex:")
-    assert "codex-orin:" in result.output
-    assert result.output.count("remaining: 60.0%") == 2
+    assert calls == [False]
+    assert set(json.loads(result.stdout)) == {"go"}
+
+
+def test_both_go_accounts_in_one_call(monkeypatch):
+    """`quse go go-orin` prints both accounts in one command."""
+    monkeypatch.setattr(
+        "quse.usage.check_opencode_go_quota",
+        lambda *, orin=False: _make_go_status(),
+    )
+
+    result = CliRunner().invoke(app, ["go", "go-orin"])
+
+    assert result.exit_code == 0
+    assert result.output.startswith("go:")
+    assert "go-orin:" in result.output
+    assert result.output.count("remaining: 90.0%") == 2
+
+
+def test_codex_orin_provider_removed(monkeypatch):
+    """The cancelled codex-orin provider is no longer a valid choice."""
+    result = CliRunner().invoke(app, ["codex-orin", "--json"])
+
+    assert result.exit_code != 0
+    assert "Unknown provider 'codex-orin'" in result.stderr
