@@ -373,10 +373,10 @@ def test_usage_failure_marks_banked_unknown_without_phantom_windows(
 ):
     """A failed usage probe must not emit an empty grant list as known-empty.
 
-    Regression for Hub intake 7bf6f6ee: `quse codex-orin --json` 401s showed
-    `banked_resets: []` with a null error, which downstream readers mistook
-    for "no banked resets" (stale "exhausted"). Error details carry no
-    phantom present windows either.
+    Regression for Hub intake 7bf6f6ee: a provider whose usage probe 401s
+    showed `banked_resets: []` with a null error, which downstream readers
+    mistook for "no banked resets" (stale "exhausted"). Error details carry
+    no phantom present windows either.
     """
     import urllib.error
 
@@ -399,132 +399,19 @@ def _write_auth(path, token):
     path.write_text(json.dumps({"tokens": {"access_token": token}}))
 
 
-def test_orin_falls_back_to_managed_bundle_on_401(tmp_path, monkeypatch):
-    """Stale ~/.codex-orin copy 401s; the Hub-managed bundle holds the live one."""
-    home_auth = tmp_path / ".codex-orin" / "auth.json"
-    _write_auth(home_auth, "stale-token")
-    managed = tmp_path / "managed"
-    _write_auth(
-        managed / "codex-orin-rev1" / "home" / ".codex" / "auth.json",
-        "live-token",
-    )
-    monkeypatch.setenv("AGENT_HUB_MANAGED_DIR", str(managed))
-
-    import time
-
-    from quse.codex_quota import CodexQuotaStatus
-
-    calls = []
-
-    def fake_fetch(token, *, timeout=10.0):
-        calls.append(token)
-        if token == "stale-token":
-            return CodexQuotaStatus(
-                checked_at=time.monotonic(),
-                error="HTTP Error 401: Unauthorized",
-            )
-        return _parse_quota_response(_make_api_response())
-
-    status = check_codex_quota(auth_path=home_auth, _fetch=fake_fetch)
-
-    assert calls == ["stale-token", "live-token"]
-    assert status.error is None
-    assert status.limit_reached is False
-
-
-def test_orin_uses_managed_when_home_copy_missing(tmp_path, monkeypatch):
-    managed = tmp_path / "managed"
-    _write_auth(
-        managed / "codex-orin-rev1" / "home" / ".codex" / "auth.json",
-        "live-token",
-    )
-    monkeypatch.setenv("AGENT_HUB_MANAGED_DIR", str(managed))
-
-    calls = []
-
-    def fake_fetch(token, *, timeout=10.0):
-        calls.append(token)
-        return _parse_quota_response(_make_api_response())
-
-    status = check_codex_quota(
-        auth_path=tmp_path / ".codex-orin" / "auth.json",
-        _fetch=fake_fetch,
-    )
-
-    assert calls == ["live-token"]
-    assert status.error is None
-
-
-def test_orin_prefers_newest_managed_bundle(tmp_path, monkeypatch):
-    import os
-
-    managed = tmp_path / "managed"
-    old = managed / "codex-orin-rev-old" / "home" / ".codex" / "auth.json"
-    new = managed / "codex-orin-rev-new" / "home" / ".codex" / "auth.json"
-    _write_auth(old, "old-token")
-    _write_auth(new, "new-token")
-    old_mtime = old.stat().st_mtime - 100
-    os.utime(old, (old_mtime, old_mtime))
-    monkeypatch.setenv("AGENT_HUB_MANAGED_DIR", str(managed))
-
-    calls = []
-
-    def fake_fetch(token, *, timeout=10.0):
-        calls.append(token)
-        return _parse_quota_response(_make_api_response())
-
-    status = check_codex_quota(
-        auth_path=tmp_path / ".codex-orin" / "auth.json",
-        _fetch=fake_fetch,
-    )
-
-    assert calls == ["new-token"]
-    assert status.error is None
-
-
-def test_codex_provider_never_reads_managed_bundle(tmp_path, monkeypatch):
-    """The main `codex` provider keeps its home-file behavior on 401."""
-    home_auth = tmp_path / ".codex" / "auth.json"
-    _write_auth(home_auth, "stale-token")
-    managed = tmp_path / "managed"
-    _write_auth(
-        managed / "shared-codex-rev1" / "home" / ".codex" / "auth.json",
-        "live-token",
-    )
-    monkeypatch.setenv("AGENT_HUB_MANAGED_DIR", str(managed))
-
-    import time
-
-    from quse.codex_quota import CodexQuotaStatus
-
-    calls = []
-
-    def fake_fetch(token, *, timeout=10.0):
-        calls.append(token)
-        return CodexQuotaStatus(
-            checked_at=time.monotonic(),
-            error="HTTP Error 401: Unauthorized",
-        )
-
-    status = check_codex_quota(auth_path=home_auth, _fetch=fake_fetch)
-
-    assert calls == ["stale-token"]
-    assert status.error == "HTTP Error 401: Unauthorized"
-
-
 # Monitoring integration tests live in the litehive test suite — they exercise
 # litehive.observability.record_codex_quota_check against heru's UsageStatus,
 # which is a litehive-side concern.
 
 
-# --- Per-account caching (codex + codex-orin) ---
+# --- Per-account caching ---
 
 
 def test_cache_is_per_account(tmp_path):
     """Each account's CODEX_HOME caches independently.
 
-    Orin's ~/.codex-orin and the main ~/.codex must never serve each other a
-    cached status: two different ChatGPT accounts have different windows.
+    Two different ChatGPT accounts (different auth paths) must never serve
+    each other a cached status: different accounts have different windows.
     """
     auth_a = tmp_path / "a" / "auth.json"
     auth_b = tmp_path / "b" / "auth.json"

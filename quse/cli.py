@@ -60,7 +60,7 @@ def usage_command(
         return 0
 
     # A single named provider keeps the compact headerless form. As soon
-    # as two or more providers are listed (e.g. `quse codex codex-orin`)
+    # as two or more providers are listed (e.g. `quse go go-orin`)
     # — or all providers are listed — each record needs its provider
     # header so the rows stay attributable.
     show_header = len(providers) != 1

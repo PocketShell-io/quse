@@ -10,7 +10,7 @@ from typing import Any, TypeAlias
 
 from quse._shared import BankedReset, UsageWindow
 from quse.claude_quota import check_claude_quota
-from quse.codex_quota import CODEX_ORIN_AUTH_PATH, check_codex_quota
+from quse.codex_quota import check_codex_quota
 from quse.copilot_quota import check_copilot_quota
 from quse.gemini_quota import check_gemini_quota
 from quse.grok_quota import check_grok_quota
@@ -344,20 +344,6 @@ class CodexUsageProvider(UsageProvider):
         }
 
 
-class CodexOrinUsageProvider(CodexUsageProvider):
-    """Orin's separate Codex account (~/.codex-orin CODEX_HOME).
-
-    Same ChatGPT usage API as the main codex provider, read with the
-    second account's token, so both accounts' quotas are visible at
-    once.
-    """
-
-    name = "codex-orin"
-
-    def check_status(self) -> Any:
-        return check_codex_quota(auth_path=CODEX_ORIN_AUTH_PATH)
-
-
 class ClaudeUsageProvider(UsageProvider):
     name = "claude"
 
@@ -499,6 +485,19 @@ class GoUsageProvider(UsageProvider):
         }
 
 
+class GoOrinUsageProvider(GoUsageProvider):
+    """Orin's OpenCode Go account (the cancelled Codex one was codex-orin).
+
+    Same OpenCode Go usage API and windows as the `go` provider, read with
+    Orin's own credential, so both accounts' quotas are visible at once.
+    """
+
+    name = "go-orin"
+
+    def check_status(self) -> Any:
+        return check_opencode_go_quota(orin=True)
+
+
 class GeminiUsageProvider(UsageProvider):
     name = "gemini"
     supported = True
@@ -547,17 +546,17 @@ UsageProviderClass: TypeAlias = type[UsageProvider]
 
 USAGE_PROVIDER_CLASSES: tuple[UsageProviderClass, ...] = (
     CodexUsageProvider,
-    CodexOrinUsageProvider,
     ClaudeUsageProvider,
     ZaiUsageProvider,
     CopilotUsageProvider,
     GrokUsageProvider,
     GoUsageProvider,
+    GoOrinUsageProvider,
     GeminiUsageProvider,
 )
 USAGE_PROVIDER_ALIASES = {
     "grok-build": "grok",
-    "orin": "codex-orin",
+    "orin": "go-orin",
     "antigravity": "gemini",
     "agy": "gemini",
     "antigrativy": "gemini",

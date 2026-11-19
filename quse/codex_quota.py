@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -19,10 +18,7 @@ logger = logging.getLogger(__name__)
 
 _USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 _RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
-# Alexey's main Codex account and Orin's second account each live in
-# their own CODEX_HOME; both are read with the same ChatGPT usage API.
 DEFAULT_CODEX_AUTH_PATH = Path.home() / ".codex" / "auth.json"
-CODEX_ORIN_AUTH_PATH = Path.home() / ".codex-orin" / "auth.json"
 # Legacy alias kept for callers that imported the private name.
 _AUTH_PATH = DEFAULT_CODEX_AUTH_PATH
 _CACHE_TTL_SECONDS = 60
@@ -196,79 +192,9 @@ def _window_for_term(
     return None
 
 
-# One cache entry per account auth path, so the two Codex accounts
-# (~/.codex and ~/.codex-orin) never evict each other's status.
+# One cache entry per account auth path, so different accounts' statuses
+# never evict each other's.
 _cached_statuses: dict[str, CodexQuotaStatus] = {}
-
-
-# Hub-managed second Codex account: the live credential lives in the
-# managed-engine bundle installed from Hub's central store, while the legacy
-# ~/.codex-orin/auth.json copy can go stale (the interactive CLI refreshes
-# whichever copy it runs with; this probe never refreshes, redeems, or
-# writes). Only the Orin provider falls back to the managed copy; the main
-# `codex` provider keeps its long-standing home-file behavior.
-_MANAGED_ORIN_LABEL = "codex-orin"
-
-
-def _managed_bundle_root() -> Path:
-    override = os.environ.get("AGENT_HUB_MANAGED_DIR")
-    if override:
-        return Path(override)
-    return Path.home() / ".config" / "agent-hub" / "managed-engines"
-
-
-def _is_orin_auth_path(auth_path: Path | None) -> bool:
-    if auth_path is None:
-        path = _AUTH_PATH
-    else:
-        path = auth_path
-    try:
-        return path.parent.name == ".codex-orin"
-    except Exception:
-        return False
-
-
-def _read_managed_bearer_token(label: str) -> str | None:
-    """Read the live Hub-managed credential without touching the home copy.
-
-    Read-only: never writes, refreshes, or redeems anything. Returns None
-    when no managed bundle for the label is installed or readable.
-    """
-    try:
-        root = _managed_bundle_root()
-        if not root.is_dir():
-            return None
-        best: Path | None = None
-        best_mtime = -1.0
-        for home in root.glob(label + "-*"):
-            auth = home / "home" / ".codex" / "auth.json"
-            try:
-                if not auth.is_file():
-                    continue
-                mtime = auth.stat().st_mtime
-            except OSError:
-                continue
-            if mtime > best_mtime:
-                best, best_mtime = auth, mtime
-        if best is None:
-            return None
-        data = json.loads(best.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return None
-        tokens = data.get("tokens")
-        if not isinstance(tokens, dict):
-            return None
-        token = tokens.get("access_token")
-        if not isinstance(token, str) or not token:
-            return None
-        return token
-    except Exception:
-        logger.warning("managed codex bundle for %s unreadable", label)
-        return None
-
-
-def _is_unauthorized_error(error: str | None) -> bool:
-    return isinstance(error, str) and "401" in error
 
 
 def _read_bearer_token(auth_path: Path | None = None) -> str | None:
@@ -420,10 +346,6 @@ def check_codex_quota(
         return cached
 
     token = _read_bearer_token(auth_path)
-    from_managed = False
-    if token is None and _is_orin_auth_path(auth_path):
-        token = _read_managed_bearer_token(_MANAGED_ORIN_LABEL)
-        from_managed = token is not None
     if token is None:
         error = "no auth token"
         status = CodexQuotaStatus(
@@ -440,21 +362,6 @@ def check_codex_quota(
     if callable(_fetch):
         fetcher = _fetch
     status = fetcher(token)
-    if (
-        status.error is not None
-        and _is_unauthorized_error(status.error)
-        and _is_orin_auth_path(auth_path)
-        and not from_managed
-    ):
-        # The home copy is stale but the Hub-managed bundle may hold the
-        # live credential (same account, refreshed centrally). Retry once
-        # read-only with the managed copy; a managed success replaces the
-        # stale failure, a managed failure keeps the original error.
-        managed = _read_managed_bearer_token(_MANAGED_ORIN_LABEL)
-        if managed and managed != token:
-            retry = fetcher(managed)
-            if retry.error is None:
-                status = retry
     _cached_statuses[key] = status
     return status
 

@@ -20,24 +20,49 @@ _DEFAULT_TIMEOUT_SECONDS = 15.0
 _USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 _AUTH_PROVIDER = "opencode-go"
 
+# Orin's OpenCode Go account (the `go-orin` provider): its own API key env
+# var and its own OpenCode auth file (~/.local/share/opencode-orin), the
+# same layout OpenCode itself uses for the main account. The Console device
+# login is the MAIN account's credential, so orin deliberately never falls
+# back to it — both providers must never report the same account twice.
+OPENCODE_GO_ORIN_AUTH_PATH = (
+    Path.home() / ".local" / "share" / "opencode-orin" / "auth.json"
+)
+_OPENCODE_GO_ORIN_API_KEY_ENV = "OPENCODE_GO_ORIN_API_KEY"
 
-def _read_access_tokens(auth_path: Path | None = None) -> list[str]:
+
+def _read_access_tokens(
+    auth_path: Path | None = None, *, orin: bool = False
+) -> list[str]:
     """All usable tokens, highest priority first (de-duplicated).
 
-    Explicit ``OPENCODE_GO_API_KEY`` wins, then the live OpenCode Console
-    device credential OpenCode itself uses, then the legacy ``opencode-go``
-    API key from ``auth.json`` (known-stale after the move to device auth).
+    Main account: explicit ``OPENCODE_GO_API_KEY`` wins, then the live
+    OpenCode Console device credential OpenCode itself uses, then the legacy
+    ``opencode-go`` API key from ``auth.json`` (known-stale after the move to
+    device auth). Orin's account reads only Orin-specific sources: the
+    ``OPENCODE_GO_ORIN_API_KEY`` override and the legacy key from Orin's own
+    ``opencode-orin`` auth file.
     """
     tokens: list[str] = []
-    configured = os.environ.get("OPENCODE_GO_API_KEY")
-    if isinstance(configured, str) and configured.strip():
-        tokens.append(configured.strip())
-    console_token = read_console_access_token()
-    if console_token:
-        tokens.append(console_token)
-    legacy_token = read_auth_token(_AUTH_PROVIDER, auth_path)
-    if legacy_token:
-        tokens.append(legacy_token)
+    if orin:
+        configured = os.environ.get(_OPENCODE_GO_ORIN_API_KEY_ENV)
+        if isinstance(configured, str) and configured.strip():
+            tokens.append(configured.strip())
+        legacy_token = read_auth_token(
+            _AUTH_PROVIDER, auth_path or OPENCODE_GO_ORIN_AUTH_PATH
+        )
+        if legacy_token:
+            tokens.append(legacy_token)
+    else:
+        configured = os.environ.get("OPENCODE_GO_API_KEY")
+        if isinstance(configured, str) and configured.strip():
+            tokens.append(configured.strip())
+        console_token = read_console_access_token()
+        if console_token:
+            tokens.append(console_token)
+        legacy_token = read_auth_token(_AUTH_PROVIDER, auth_path)
+        if legacy_token:
+            tokens.append(legacy_token)
     ordered: list[str] = []
     for token in tokens:
         if token not in ordered:
@@ -45,8 +70,10 @@ def _read_access_tokens(auth_path: Path | None = None) -> list[str]:
     return ordered
 
 
-def _read_access_token(auth_path: Path | None = None) -> str | None:
-    tokens = _read_access_tokens(auth_path)
+def _read_access_token(
+    auth_path: Path | None = None, *, orin: bool = False
+) -> str | None:
+    tokens = _read_access_tokens(auth_path, orin=orin)
     if not tokens:
         return None
     return tokens[0]
@@ -109,7 +136,9 @@ class OpenCodeGoQuotaStatus:
         return max(values)
 
 
-_cached_status: OpenCodeGoQuotaStatus | None = None
+# One cache entry per account, so the main and orin accounts never evict
+# each other's status.
+_cached_statuses: dict[str, OpenCodeGoQuotaStatus] = {}
 
 
 def _number_or_none(value: object) -> float | None:
@@ -195,8 +224,10 @@ def _fetch_usage_payload(
     return data
 
 
-def _fetch_usage(*, auth_path: Path | None = None) -> OpenCodeGoQuotaStatus:
-    tokens = _read_access_tokens(auth_path)
+def _fetch_usage(
+    *, auth_path: Path | None = None, orin: bool = False
+) -> OpenCodeGoQuotaStatus:
+    tokens = _read_access_tokens(auth_path, orin=orin)
     if not tokens:
         return OpenCodeGoQuotaStatus(
             checked_at=time.monotonic(), error="no-credentials"
@@ -246,23 +277,26 @@ def check_opencode_go_quota(
     *,
     cache_ttl: float = _CACHE_TTL_SECONDS,
     auth_path: Path | None = None,
+    orin: bool = False,
     _fetch: object = None,
 ) -> OpenCodeGoQuotaStatus:
     """Check OpenCode Go quota. Returns cached result within TTL. Fails open."""
-    global _cached_status
-    if (
-        _cached_status is not None
-        and time.monotonic() - _cached_status.checked_at < cache_ttl
-    ):
-        return _cached_status
+    key = "default"
+    if orin:
+        key = "orin"
+    now = time.monotonic()
+
+    cached = _cached_statuses.get(key)
+    if cached is not None and now - cached.checked_at < cache_ttl:
+        return cached
 
     if callable(_fetch):
-        _cached_status = _fetch()
+        status = _fetch()
     else:
-        _cached_status = _fetch_usage(auth_path=auth_path)
-    return _cached_status
+        status = _fetch_usage(auth_path=auth_path, orin=orin)
+    _cached_statuses[key] = status
+    return status
 
 
 def reset_cache() -> None:
-    global _cached_status
-    _cached_status = None
+    _cached_statuses.clear()
