@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -158,14 +159,24 @@ def _is_orin_entry(entry: dict) -> bool:
     return False
 
 
+def _entry_expiry_ms(value: dict) -> int:
+    """Return OAuth expiry timestamp in epoch ms, or 0 when absent/invalid."""
+    raw = value.get("expires")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _select_device_access_token(
     entries: list,
     *,
     orin_only: bool = False,
     exclude_orin: bool = False,
 ) -> str | None:
-    """Pick the Console device OAuth access token, preferring the active one."""
-    candidates: list[tuple[bool, str]] = []
+    """Pick the Console device OAuth access token, preferring unexpired and active."""
+    now_ms = int(time.time() * 1000)
+    candidates: list[tuple[bool, bool, int, str]] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -184,12 +195,16 @@ def _select_device_access_token(
         access = value.get("access")
         if not isinstance(access, str) or not access.strip():
             continue
-        candidates.append((bool(entry.get("active")), access.strip()))
+        expires_ms = _entry_expiry_ms(value)
+        unexpired = expires_ms == 0 or expires_ms > now_ms
+        candidates.append(
+            (unexpired, bool(entry.get("active")), expires_ms, access.strip())
+        )
     if not candidates:
         return None
-    # Stable sort: active credentials first, export order otherwise.
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
+    # Unexpired credentials first, then active, then latest expiry.
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return candidates[0][3]
 
 
 def read_console_access_token() -> str | None:
